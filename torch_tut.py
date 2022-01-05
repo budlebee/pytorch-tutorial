@@ -1,36 +1,99 @@
 # %%
 import torch
 from torch import nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from torchvision import datasets
 from torchvision.transforms import ToTensor, Lambda, Compose
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import os
+from sklearn.preprocessing import MinMaxScaler
 
-# %% 공개 데이터셋에서 학습 데이터를 내려받습니다.
-training_data = datasets.FashionMNIST(
-    root="data",
-    train=True,
-    download=True,
-    transform=ToTensor(),
-)
-
-# 공개 데이터셋에서 테스트 데이터를 내려받습니다.
-test_data = datasets.FashionMNIST(
-    root="data",
-    train=False,
-    download=True,
-    transform=ToTensor(),
-)
+#directory_of_python_script = os.path.dirname(os.path.abspath(__file__))
+directory_of_python_script = "/Users/zowan/Documents/python/binance-pytorch"
 
 # %%
-batch_size = 64
+
+
+class CustomDataset(Dataset):
+    def __init__(self, dir, transform=None):
+        self.data = []  # 데이터를 정제해 담을 행렬 생성
+        df = pd.read_csv(dir)  # pandas를 이용한 csv 파일 읽기
+        for idx in df.index:
+            temp_target = df.values[idx][0]  # 타겟 행 받아오기
+            temp_input = df.values[idx][1:]  # 행렬 행 받아오기
+            # 타겟 / 행렬 구분된 데이터를 data에 첨부
+            self.data.append((temp_input, temp_target))
+        self.transform = transform  # 데이터 받아오기 이후 데이터 전처리
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        x = self.data[idx]
+        if self.transform:
+            x = self.transform(x)
+        return x
+
+
+# %%
+df = pd.read_csv(directory_of_python_script + "/data/" +
+                 "BTC"+"_kline_"+"1h"+"_210101_211231.csv")
+scaler = MinMaxScaler()
+df[['open_price','high_price','low_price','close_price','volume']] = scaler.fit_transform(df[['open_price','high_price','low_price','close_price','volume']])
+df.head()
+df.info()
+X = df[['open_price', 'high_price', 'low_price', 'volume']].values
+y = df['close_price'].values
+
+# %% make sequence data
+
+
+def seq_data(x, y, seq_len):
+    x_seq = []
+    y_seq = []
+    for i in range(len(x)-seq_len):
+        x_seq.append(x[i:i+seq_len])
+        y_seq.append(y[i+seq_len])
+    return torch.FloatTensor(x_seq).to(device), torch.FloatTensor(y_seq).to(device).view([-1, 1])
+
+# 앞의 절반은 트레인용, 뒤의 절반은 테스트용으로 써보자
+
+
+split = len(X)//2
+seq_len = 5
+
+x_seq, y_seq = seq_data(X, y, seq_len)
+
+x_train_seq = x_seq[:split]
+y_train_seq = y_seq[:split]
+x_test_seq = x_seq[split:]
+y_test_seq = y_seq[split:]
+print(x_train_seq.size(), y_train_seq.size())
+print(x_test_seq.size(), y_test_seq.size())
+
+# %%
+
+
+batch_size = 20
 
 # 데이터로더를 생성합니다.
-train_dataloader = DataLoader(training_data, batch_size=batch_size)
-test_dataloader = DataLoader(test_data, batch_size=batch_size)
+# train_data = CustomDataset(dir=directory_of_python_script +
+#                           "/data/"+"BTC"+"_kline_"+"1h"+"_210101_211231.csv")
+# test_data = CustomDataset(dir=directory_of_python_script +
+#                          "/data/"+"BTC"+"_kline_"+"1h"+"_200101_201231.csv")
+train_data = torch.utils.data.TensorDataset(x_train_seq, y_train_seq)
+test_data = torch.utils.data.TensorDataset(x_test_seq, y_test_seq)
+train_dataloader = DataLoader(train_data, batch_size=batch_size, shuffle=False)
+test_dataloader = DataLoader(test_data, batch_size=batch_size, shuffle=False)
+
+input_size = x_seq.size(2)
+layer_num = 2
+hidden_size = 8
 
 for X, y in test_dataloader:
-    print("Shape of X [N, C, H, W]: ", X.shape)
+    print("Shape of X: ", X.shape)
     print("Shape of y: ", y.shape, y.dtype)
     break
 
@@ -39,108 +102,90 @@ for X, y in test_dataloader:
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using {device} device")
 
+
 # %% 모델을 정의합니다.
 
 
-class NeuralNetwork(nn.Module):
-    def __init__(self):
-        super(NeuralNetwork, self).__init__()
-        self.flatten = nn.Flatten()
-        self.linear_relu_stack = nn.Sequential(
-            nn.Linear(28*28, 512),
-            nn.ReLU(),
-            nn.Linear(512, 512),
-            nn.ReLU(),
-            nn.Linear(512, 10)
-        )
+class TestRNN(nn.Module):
+    def __init__(self, input_size, hidden_size, seq_len, layer_num, device):
+        super(TestRNN, self).__init__()
+        self.device = device
+        self.hidden_size = hidden_size
+        self.layer_num = layer_num
+        self.rnn = nn.RNN(input_size, hidden_size, layer_num, batch_first=True)
+        self.fc = nn.Sequential(
+            nn.Linear(hidden_size*seq_len, 1), nn.Sigmoid())
 
     def forward(self, x):
-        x = self.flatten(x)
-        logits = self.linear_relu_stack(x)
-        return logits
+        h0 = torch.zeros(self.layer_num, x.size()[
+                         0], self.hidden_size).to(self.device)
+        out, _ = self.rnn(x, h0)
+        out = out.reshape(out.shape[0], -1)
+        out = self.fc(out)
+        return out
 
 
-model = NeuralNetwork().to(device)
-print(model)
-# %%
-loss_fn = nn.CrossEntropyLoss()
-optimizer = torch.optim.SGD(model.parameters(), lr=1e-3)
+model = TestRNN(input_size=input_size,
+                hidden_size=hidden_size,
+                seq_len=seq_len,
+                layer_num=layer_num,
+                device=device).to(device)
 
-# %%
+loss_fn = nn.MSELoss()
+lr = 1e-3
+epochs = 200
+optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+
+# %% train
+loss_graph = []
+n = len(train_dataloader)
+
+for epoch in range(epochs):
+    running_loss = 0.0
+    for data in train_dataloader:
+        seq, target = data  # batch data
+        out = model(seq)  # model
+        loss = loss_fn(out, target)  # loss by output
+        optimizer.zero_grad()  # clear grad
+        loss.backward()  # backprop
+        optimizer.step()  # update
+        running_loss += loss.item()  # sum loss
+    loss_graph.append(running_loss/n)  # average loss
+    if epoch % 50 == 0:
+        print(f"epoch: {epoch}, loss: {running_loss/n}")
+
+# %% check loss graph
+
+plt.figure(figsize=(20, 10))
+plt.plot(loss_graph)
+plt.show()
+
+# %% check prediction
 
 
-def train(dataloader, model, loss_fn, optimizer):
-    size = len(dataloader.dataset)
-    for batch, (X, y) in enumerate(dataloader):
-        X, y = X.to(device), y.to(device)
-
-        # 예측 오류 계산
-        pred = model(X)
-        loss = loss_fn(pred, y)
-
-        # 역전파
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-
-        if batch % 100 == 0:
-            loss, current = loss.item(), batch * len(X)
-            print(f"loss: {loss:>7f}  [{current:>5d}/{size:>5d}]")
-# %%
-
-
-def test(dataloader, model, loss_fn):
-    size = len(dataloader.dataset)
-    num_batches = len(dataloader)
-    model.eval()
-    test_loss, correct = 0, 0
+def plot_prdt(train_loader, test_loader, actual):
     with torch.no_grad():
-        for X, y in dataloader:
-            X, y = X.to(device), y.to(device)
-            pred = model(X)
-            test_loss += loss_fn(pred, y).item()
-            correct += (pred.argmax(1) == y).type(torch.float).sum().item()
-    test_loss /= num_batches
-    correct /= size
-    print(
-        f"Test Error: \n Accuracy: {(100*correct):>0.1f}%, Avg loss: {test_loss:>8f} \n")
+        train_prdt = []
+        test_prdt = []
+        for data in train_loader:
+            seq, target = data
+            out = model(seq)
+            train_prdt += out.cpu().numpy().tolist()
+        for data in test_loader:
+            seq, target = data
+            out = model(seq)
+            test_prdt += out.cpu().numpy().tolist()
+
+    total = train_prdt+test_prdt
+    plt.figure(figsize=(20, 10))
+    plt.plot(np.ones(100)*len(train_prdt),
+             np.linspace(0, 1, 100), '--', linewidth=0.6)
+    plt.plot(actual, '--')
+    plt.plot(total, 'b', linewidth=0.6)
+    plt.legend(['train', 'actual', 'prediction'])
+    plt.show()
 
 
-# %%
-epochs = 5
-for t in range(epochs):
-    print(f"Epoch {t+1}\n-------------------------------")
-    train(train_dataloader, model, loss_fn, optimizer)
-    test(test_dataloader, model, loss_fn)
-print("Done!")
-
-# %% 모델을 저장하는 일반적인 방법은 (모델의 매개변수들을 포함하여) 내부 상태 사전(internal state dictionary)을 직렬화(serialize)하는 것입니다.
-torch.save(model.state_dict(), "model.pth")
-print("Saved PyTorch Model State to model.pth")
-
-# %% load model
-model = NeuralNetwork()
-model.load_state_dict(torch.load("model.pth"))
-
-# %% predict
-classes = [
-    "T-shirt/top",
-    "Trouser",
-    "Pullover",
-    "Dress",
-    "Coat",
-    "Sandal",
-    "Shirt",
-    "Sneaker",
-    "Bag",
-    "Ankle boot",
-]
-
-model.eval()
-x, y = test_data[0][0], test_data[0][1]
-with torch.no_grad():
-    pred = model(x)
-    predicted, actual = classes[pred[0].argmax(0)], classes[y]
-    print(f'Predicted: "{predicted}", Actual: "{actual}"')
+plot_prdt(train_dataloader, test_dataloader, df['close_price'][seq_len:])
 
 # %%

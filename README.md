@@ -10,3 +10,4 @@
 8. 모델을 저장합니다.
 
 
+https://data-science-hi.tistory.com/190
