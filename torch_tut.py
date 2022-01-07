@@ -12,6 +12,10 @@ from sklearn.preprocessing import MinMaxScaler
 
 #directory_of_python_script = os.path.dirname(os.path.abspath(__file__))
 directory_of_python_script = "/Users/zowan/Documents/python/binance-pytorch"
+# %% 학습에 사용할 CPU나 GPU 장치를 얻습니다.
+
+device = "cuda" if torch.cuda.is_available() else "cpu"
+print(f"Using {device} device")
 
 # %%
 
@@ -38,11 +42,15 @@ class CustomDataset(Dataset):
 
 
 # %%
+
+file_name = "BTC_kline_15m_2021-01-01_2022-01-07.csv"
+
 df = pd.read_csv(directory_of_python_script + "/data/" +
-                 "BTC"+"_kline_"+"1h"+"_210101_211231.csv")
+                 file_name)
 scaler = MinMaxScaler()
-df[['open_price','high_price','low_price','close_price','volume']] = scaler.fit_transform(df[['open_price','high_price','low_price','close_price','volume']])
-df.head()
+df[['open_price', 'high_price', 'low_price', 'close_price', 'volume']] = scaler.fit_transform(
+    df[['open_price', 'high_price', 'low_price', 'close_price', 'volume']])
+# df.head()
 df.info()
 X = df[['open_price', 'high_price', 'low_price', 'volume']].values
 y = df['close_price'].values
@@ -61,6 +69,7 @@ def seq_data(x, y, seq_len):
 # 앞의 절반은 트레인용, 뒤의 절반은 테스트용으로 써보자
 
 
+#split = round(len(X)/(1.4))
 split = len(X)//2
 seq_len = 5
 
@@ -97,11 +106,6 @@ for X, y in test_dataloader:
     print("Shape of y: ", y.shape, y.dtype)
     break
 
-# %% 학습에 사용할 CPU나 GPU 장치를 얻습니다.
-
-device = "cuda" if torch.cuda.is_available() else "cpu"
-print(f"Using {device} device")
-
 
 # %% 모델을 정의합니다.
 
@@ -114,7 +118,10 @@ class TestRNN(nn.Module):
         self.layer_num = layer_num
         self.rnn = nn.RNN(input_size, hidden_size, layer_num, batch_first=True)
         self.fc = nn.Sequential(
-            nn.Linear(hidden_size*seq_len, 1), nn.Sigmoid())
+            nn.Linear(hidden_size*seq_len, 5),
+            nn.ReLU(),
+            nn.Linear(5, 1)
+        )
 
     def forward(self, x):
         h0 = torch.zeros(self.layer_num, x.size()[
@@ -133,7 +140,7 @@ model = TestRNN(input_size=input_size,
 
 loss_fn = nn.MSELoss()
 lr = 1e-3
-epochs = 200
+epochs = 50 #200
 optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
 # %% train
@@ -151,7 +158,7 @@ for epoch in range(epochs):
         optimizer.step()  # update
         running_loss += loss.item()  # sum loss
     loss_graph.append(running_loss/n)  # average loss
-    if epoch % 50 == 0:
+    if epoch % 20 == 0:
         print(f"epoch: {epoch}, loss: {running_loss/n}")
 
 # %% check loss graph
@@ -163,7 +170,7 @@ plt.show()
 # %% check prediction
 
 
-def plot_prdt(train_loader, test_loader, actual):
+def plot_prdt(train_loader, test_loader, actual, model):
     with torch.no_grad():
         train_prdt = []
         test_prdt = []
@@ -186,6 +193,10 @@ def plot_prdt(train_loader, test_loader, actual):
     plt.show()
 
 
-plot_prdt(train_dataloader, test_dataloader, df['close_price'][seq_len:])
+plot_prdt(train_dataloader, test_dataloader,
+          df['close_price'][seq_len:], model=model)
+
+# %%
+torch.save(model, './models/rnn_21-01-01_22-01-07_15m.pth')
 
 # %%
