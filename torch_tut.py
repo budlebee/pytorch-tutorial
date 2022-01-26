@@ -48,12 +48,13 @@ file_name = "BTC_kline_15m_2021-01-01_2022-01-07.csv"
 df = pd.read_csv(directory_of_python_script + "/data/" +
                  file_name)
 scaler = MinMaxScaler()
-df[['open_price', 'high_price', 'low_price', 'close_price', 'volume']] = scaler.fit_transform(
-    df[['open_price', 'high_price', 'low_price', 'close_price', 'volume']])
+df[['open_price_log', 'high_price_log', 'low_price_log', 'close_price_log', 'volume_per_num_of_trades', 'low_price_log_per_volume']] = scaler.fit_transform(
+    df[['open_price_log', 'high_price_log', 'low_price_log', 'close_price_log', 'volume_per_num_of_trades', 'low_price_log_per_volume']])
 # df.head()
 df.info()
-X = df[['open_price', 'high_price', 'low_price', 'volume']].values
-y = df['close_price'].values
+X = df[['open_price_log', 'high_price_log', 'low_price_log',
+        'volume_per_num_of_trades', 'low_price_log_per_volume']].values
+y = df['close_price_log'].values
 
 # %% make sequence data
 
@@ -71,7 +72,7 @@ def seq_data(x, y, seq_len):
 
 #split = round(len(X)/(1.4))
 split = len(X)//2
-seq_len = 5
+seq_len = 4
 
 x_seq, y_seq = seq_data(X, y, seq_len)
 
@@ -118,9 +119,9 @@ class TestRNN(nn.Module):
         self.layer_num = layer_num
         self.rnn = nn.RNN(input_size, hidden_size, layer_num, batch_first=True)
         self.fc = nn.Sequential(
-            nn.Linear(hidden_size*seq_len, 5),
+            nn.Linear(hidden_size*seq_len, 4),
             nn.ReLU(),
-            nn.Linear(5, 1)
+            nn.Linear(4, 1)
         )
 
     def forward(self, x):
@@ -140,7 +141,7 @@ model = TestRNN(input_size=input_size,
 
 loss_fn = nn.MSELoss()
 lr = 1e-3
-epochs = 50 #200
+epochs = 200
 optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
 # %% train
@@ -194,7 +195,7 @@ def plot_prdt(train_loader, test_loader, actual, model):
 
 
 plot_prdt(train_dataloader, test_dataloader,
-          df['close_price'][seq_len:], model=model)
+          df['close_price_log'][seq_len:], model=model)
 
 # %%
 torch.save(model, './models/rnn_21-01-01_22-01-07_15m.pth')

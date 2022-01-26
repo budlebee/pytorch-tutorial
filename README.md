@@ -12,27 +12,3 @@
 
 # 파이토치 RNN 레퍼런스
 https://data-science-hi.tistory.com/190
-
-$$
-\ket{\Phi^+}_{AB}\ket{\Phi^+}_{CD} 
-= \frac{1}{2}(\ket{0}_{A}\ket{00}_{BC}\ket{0}_{D} 
-+ \ket{0}_{A}\ket{01}_{BC}\ket{1}_{D} + \ket{1}_{A}\ket{10}_{BC}\ket{0}_{D} + \ket{1}_{A}\ket{11}_{BC}\ket{1}_{D})
-$$
-
-Bell State Measurement for $\ket{\Phi^+}_{BC}$
-$$
-I\otimes \bra{\Phi^+}_{BC}\otimes I
-$$
-
-$$
-I\otimes \bra{\Phi^+}_{BC}\otimes I\ket{\Phi^+}_{AB}\ket{\Phi^+}_{CD}
-= \frac{1}{2\sqrt{2}}[
-    \ket{0}(\braket{00|00}+\braket{11|00})\ket{0}
-    +\ket{0}(\braket{00|01}+\braket{11|01})\ket{1}
-    +\ket{1}(\braket{00|10}+\braket{11|10})\ket{0}
-    +\ket{1}(\braket{00|11}+\braket{11|11})\ket{1}
- ] 
-$$
-$$
-= \frac{1}{2\sqrt{2}}[\ket{00}_{AD}+\ket{11}_{AD}] = \frac{1}{2}\ket{\Phi^+}_{AD}
-$$
