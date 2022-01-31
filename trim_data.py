@@ -63,10 +63,10 @@ def make_volume_bar(df, chunk):
     return df_vbar
 
 
+filename = 'future_volumebar_BTC_1m_2022-01-01_2022-01-22.csv'
 df_vbar = make_volume_bar(df, 15)
 df_vbar.to_csv(directory_of_python_script +
-               '/data/future_volumebar_BTC_1m_2022-01-01_2022-01-22.csv')
-print(df_vbar['volume'])
+               '/data/'+filename)
 
 # %% make dollar bar from 1m data
 

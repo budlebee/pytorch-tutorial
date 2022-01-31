@@ -13,7 +13,7 @@ directory_of_python_script = os.path.dirname(os.path.abspath(__file__))
 # %%
 
 
-def take_spot_data(symbol, interval, start, end):
+def take_spot_data(symbol="BTC", interval="1m", start="2022-01-01", end="2022-01-31"):
     data = client.get_historical_klines(
         symbol=symbol+"USDT",
         interval=interval,
@@ -26,16 +26,16 @@ def take_spot_data(symbol, interval, start, end):
               symbol+"_"+interval+"_"+start+"_"+end+".csv")
 
 
-take_spot_data("BTC", "1m", "2022-01-01", "2022-01-22")
+#take_spot_data("BTC", "1m", "2022-01-01", "2022-01-22")
 # %%
 # take data from binance
 
 
-def take_future_data(sym, itv, start, end):
+def take_future_data(symbol="BTC", interval="1m", start="2022-01-01", end="2022-01-31"):
     # take data from binance
     data = client.futures_historical_klines(
-        symbol=sym+"USDT",
-        interval=itv,
+        symbol=symbol+"USDT",
+        interval=interval,
         start_str=start,  # 2021-01-01
         end_str=end
     )
@@ -43,13 +43,13 @@ def take_future_data(sym, itv, start, end):
     df = pd.DataFrame(data, columns=['open_time', 'open_price', 'high_price', 'low_price', 'close_price', 'volume', 'close_time',
                                      'quote_asset_volume', 'number_of_trades', 'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore'])
     df.to_csv(directory_of_python_script +
-              "/data/future_"+sym+"_"+itv+"_"+start+"_"+end+".csv", sep=',')
+              "/data/future_"+symbol+"_"+interval+"_"+start+"_"+end+".csv", sep=',')
     # df_2020 = pd.DataFrame(data_2020, columns=['open_time', 'open_price', 'high_price', 'low_price', 'close_price', 'volume', 'close_time',
     #                                           'quote_asset_volume', 'number_of_trades', 'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore'])
     # df_2020.to_csv(directory_of_python_script +
-    #               "/data/"+sym+"_kline_"+itv+"_200101_201231.csv", sep=',')
+    #               "/data/"+symbol+"_kline_"+interval+"_200101_201231.csv", sep=',')
 
 
-take_future_data("BTC", "1m", "2022-01-01", "2022-01-22")
+take_future_data("BTC", "1m", "2022-01-01", "2022-01-31")
 
 # %%
