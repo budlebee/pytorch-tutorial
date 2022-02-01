@@ -2,7 +2,8 @@
 from tkinter import HORIZONTAL
 import pandas as pd
 import os
-
+import numpy as np
+import pickle
 
 directory_of_python_script = os.path.dirname(os.path.abspath(__file__))
 train_df = pd.read_csv(directory_of_python_script +
@@ -22,20 +23,80 @@ class CandleAnalyzer():
     def getData(self):
         # web sockets 를 통해 데이터를 가져오기. 콜백함수에서 뭔가를 하겠지.
         print("g")
-
+    dir = os.path.dirname(os.path.abspath(__file__))
     df = pd.DataFrame()
     oneMinuteBar = pd.DataFrame()
     volumeBar = pd.DataFrame()
     dollarBar = pd.DataFrame()
     lastBet = {"betSize": 0, "betTime": 0,
-               "betDir": "", "betPrice": 0, 'candleType': ""}
+               "betDwertir": "", "betPrice": 0, 'candleType': ""}
     horizontalTime = 1000  # ms
     benefit = 1.02
     sampleLength = 5  # 다섯개의 캔들 데이터를 기반으로 판단할 것이다.
     candleSample = [{"highPrice": "", "lowPrice": "", "openPrice": "",
                      "closePrice": "", "volume": "", 'numberOfTrades': ""}]
+    paramNum = 6
+    candleMatrix = np.zeros((sampleLength, paramNum))
+    paramWeight = np.ones((paramNum, 1))
+    timeWeight = np.ones((1, sampleLength))
+    raisingParamWeight = np.ones((paramNum, 1))
+    raisingTimeWeight = np.ones((1, sampleLength))
+    loweringParamWeight = np.ones((paramNum, 1))
+    loweringTimeWeight = np.ones((1, sampleLength))
+
+    def saveParamWeight(self):
+        with open("paramWeight.pickle", "wb") as f:
+            pickle.dump(self.paramWeight*3, f)
+
+    def loadParamWeight(self):
+        with open("paramWeight.pickle", "rb") as f:
+            self.paramWeight = pickle.load(f)
+            print(self.paramWeight)
+
+    def saveTimeWeight(self):
+        with open("timeWeight.pickle", "wb") as f:
+            pickle.dump(self.timeWeight, f)
+
+    def loadTimeWeight(self):
+        with open("timeWeight.pickle", "rb") as f:
+            self.timeWeight = pickle.load(f)
+
+    def saveRaisingParamWeight(self):
+        with open("raisingParamWeight.pickle", "wb") as f:
+            pickle.dump(self.raisingParamWeight*3, f)
+
+    def loadRaisingParamWeight(self):
+        with open("raisingParamWeight.pickle", "rb") as f:
+            self.raisingParamWeight = pickle.load(f)
+
+    def saveRaisingTimeWeight(self):
+        with open("raisingTimeWeight.pickle", "wb") as f:
+            pickle.dump(self.raisingTimeWeight, f)
+
+    def loadRaisingTimeWeight(self):
+        with open("raisingTimeWeight.pickle", "rb") as f:
+            self.raisingTimeWeight = pickle.load(f)
+
+    def saveLoweringParamWeight(self):
+        with open("loweringParamWeight.pickle", "wb") as f:
+            pickle.dump(self.loweringParamWeight*3, f)
+
+    def loadLoweringParamWeight(self):
+        with open("loweringParamWeight.pickle", "rb") as f:
+            self.loweringParamWeight = pickle.load(f)
+
+    def saveLoweringTimeWeight(self):
+        with open("loweringTimeWeight.pickle", "wb") as f:
+            pickle.dump(self.loweringTimeWeight, f)
+
+    def loadLoweringTimeWeight(self):
+        with open("loweringTimeWeight.pickle", "rb") as f:
+            self.loweringTimeWeight = pickle.load(f)
+
     # 해당 캔들 데이터를 통해 바의 길이와 테일의 길이를 재구성할 수 있으니 하나의 다변수 방정식을 만들어낼 수 있을것.
     # 방정식의 파라미터를 교정하는 식으로.
+    # 행렬로 만들자. 다섯개의 샘플이니 행이 5개인 행렬. 각 요소별로 칼럼이 되겠네
+    # 그럼 웨이트 벡터를 곱해서 나온건 벡터일텐데, 이제 시간가중치 듀얼벡터를 곱해서 스칼라 값 하나가 나오게끔 하자.
 
     def handleData(self, msg):
         if self.lastBet["betDir"] == "up":
@@ -43,7 +104,8 @@ class CandleAnalyzer():
                 # betting win. add weight to last betting strategy.
                 # get lastBet['candleType'] and tuning weight.
                 # 캔들타입을 굳이 명시해야되나? 어차피 다변수 방정식이니 캔들타입이 아니라 방정식의 계수들이 중요한거잖아.
-
+                self.saveParamWeight()
+                self.saveTimeWeight()
                 print('betting win')
             elif msg['k']['l'] < self.lastBet['betPrice']/self.benefit:
                 # betting lose. lose weight to last betting strategy.
@@ -102,7 +164,67 @@ class CandleAnalyzer():
 
     test_df = pd.DataFrame()
 
-    def testGetData(self, df):
+    """
+    candleSample = [{"highPrice": "", "lowPrice": "", "openPrice": "",
+                     "closePrice": "", "volume": "", 'numberOfTrades': ""}]
+    paramNum = 6
+    candleMatrix = np.ones((sampleLength, paramNum))
+    paramWeight = np.ones((paramNum, 1))
+    timeWeight = np.ones((1, sampleLength))
 
-        # 1분봉 데이터를 받아서 처리하는 함수.
+    """
+
+    def trainModel(self):
+        df = pd.read_csv(
+            self.dir+'/data/BTC_kline_15m_2021-01-01_2022-01-07.csv')
+
+        # 캔들행렬 초기화
+        for i in range(self.sampleLength):
+            self.candleMatrix[i, 0] = df.iloc[i]['high_price']
+            self.candleMatrix[i, 1] = df.iloc[i]['low_price']
+            self.candleMatrix[i, 2] = df.iloc[i]['open_price']
+            self.candleMatrix[i, 3] = df.iloc[i]['close_price']
+            self.candleMatrix[i, 4] = df.iloc[i]['volume']
+            self.candleMatrix[i, 5] = df.iloc[i]['number_of_trades']
+
+        # 본격적으로 모델 돌아감
+        for i in range(6, len(df)):
+            # lastBet 이 있다면 수익 체크.
+
+            # 캔들행렬 업데이트
+            self.candleMatrix[0] = self.candleMatrix[1]
+            self.candleMatrix[1] = self.candleMatrix[2]
+            self.candleMatrix[2] = self.candleMatrix[3]
+            self.candleMatrix[3] = self.candleMatrix[4]
+            self.candleMatrix[4, 0] = df.iloc[i]['high_price']
+            self.candleMatrix[4, 1] = df.iloc[i]['low_price']
+            self.candleMatrix[4, 2] = df.iloc[i]['open_price']
+            self.candleMatrix[4, 3] = df.iloc[i]['close_price']
+            self.candleMatrix[4, 4] = df.iloc[i]['volume']
+            self.candleMatrix[4, 5] = df.iloc[i]['number_of_trades']
+
+            # prob 는 사건이 발생할 확률. 여기서 뭔가가 발생한다면, 그때 이게 상승인지 하락인지 체크하는 모델로 넘어감.
+            prob = np.matmul(self.timeWeight, np.matmul(
+                self.candleMatrix, self.paramWeight))
+            if prob > 0.5:
+                raisingProb = self.checkRaisingSignal(df)
+                loweringProb = self.checkLoweringSignal(df)
+                if raisingProb > loweringProb:
+                    self.decideBetSize(df)
+                else:
+                    self.decideBetSize(df)
+
+        # init candleMatrix
+
+        # 15분봉 데이터를 받아서 처리하는 함수.
+
         return
+
+
+# %%
+ca = CandleAnalyzer()
+
+ca.trainModel()
+
+
+# %%
