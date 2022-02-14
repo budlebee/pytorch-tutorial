@@ -57,6 +57,7 @@ class CandleAnalyzer():
         with open("paramWeight.pickle", "rb") as f:
             self.paramWeight = pickle.load(f)
             # print(self.paramWeight)
+        return self.paramWeight
 
     def saveTimeWeight(self):
         with open("timeWeight.pickle", "wb") as f:
@@ -65,6 +66,7 @@ class CandleAnalyzer():
     def loadTimeWeight(self):
         with open("timeWeight.pickle", "rb") as f:
             self.timeWeight = pickle.load(f)
+        return self.timeWeight
 
     def saveRaisingParamWeight(self):
         with open("raisingParamWeight.pickle", "wb") as f:
@@ -73,6 +75,7 @@ class CandleAnalyzer():
     def loadRaisingParamWeight(self):
         with open("raisingParamWeight.pickle", "rb") as f:
             self.raisingParamWeight = pickle.load(f)
+        return self.raisingParamWeight
 
     def saveRaisingTimeWeight(self):
         with open("raisingTimeWeight.pickle", "wb") as f:
@@ -81,6 +84,7 @@ class CandleAnalyzer():
     def loadRaisingTimeWeight(self):
         with open("raisingTimeWeight.pickle", "rb") as f:
             self.raisingTimeWeight = pickle.load(f)
+        return self.raisingTimeWeight
 
     def saveLoweringParamWeight(self):
         with open("loweringParamWeight.pickle", "wb") as f:
@@ -89,6 +93,7 @@ class CandleAnalyzer():
     def loadLoweringParamWeight(self):
         with open("loweringParamWeight.pickle", "rb") as f:
             self.loweringParamWeight = pickle.load(f)
+        return self.loweringParamWeight
 
     def saveLoweringTimeWeight(self):
         with open("loweringTimeWeight.pickle", "wb") as f:
@@ -97,6 +102,7 @@ class CandleAnalyzer():
     def loadLoweringTimeWeight(self):
         with open("loweringTimeWeight.pickle", "rb") as f:
             self.loweringTimeWeight = pickle.load(f)
+        return self.loweringTimeWeight
 
     # 해당 캔들 데이터를 통해 바의 길이와 테일의 길이를 재구성할 수 있으니 하나의 다변수 방정식을 만들어낼 수 있을것.
     # 방정식의 파라미터를 교정하는 식으로.
@@ -197,7 +203,7 @@ class CandleAnalyzer():
             self.candleMatrix[i][4] = df.iloc[i]['volume']
             self.candleMatrix[i][5] = df.iloc[i]['number_of_trades']
 
-        for i in tqdm(range(self.sampleLength, len(df)), desc='trainSignalCatch...'):
+        for i in tqdm(range(self.sampleLength, len(df))):
             candle = df.iloc[i]
 
             for jj in range(self.sampleLength-1):
@@ -222,9 +228,6 @@ class CandleAnalyzer():
                 signalFail.append(candle['close_time'])
             else:
                 signalFail.append(candle['close_time'])
-
-            self.loadParamWeight()
-            self.loadTimeWeight()
 
             x = np.matmul(
                 self.candleMatrix, self.paramWeight)
@@ -335,19 +338,367 @@ class CandleAnalyzer():
         print("done")
         return
 
+    def trainUpSignalCatch(self):
+        df = pd.read_csv(
+            self.dir+'/data/BTC_kline_15m_2021-01-01_2022-01-07.csv')
+# '/data/BTC_kline_15m_2021-01-01_2022-01-07.csv'
+        # 캔들행렬 초기화
+        positionLifetime = self.positionLifetime
+        prob = 0
+        lastBet = {"betSize": 0, "betTime": 0,
+                   "betDir": "", "betPrice": 0, 'candleType': ""}
+        for i in range(self.sampleLength):
+            self.candleMatrix[i][0] = df.iloc[i]['high_price']
+            self.candleMatrix[i][1] = df.iloc[i]['low_price']
+            self.candleMatrix[i][2] = df.iloc[i]['open_price']
+            self.candleMatrix[i][3] = df.iloc[i]['close_price']
+            self.candleMatrix[i][4] = df.iloc[i]['volume']
+            self.candleMatrix[i][5] = df.iloc[i]['number_of_trades']
+
+        # 본격적으로 모델 돌아감
+        for i in tqdm(range(self.sampleLength, len(df)), desc='trainSignalCatch...'):
+            candle = df.iloc[i]
+            # 캔들행렬 업데이트
+            for jj in range(self.sampleLength-1):
+                self.candleMatrix[jj] = self.candleMatrix[jj+1]
+
+            self.candleMatrix[self.sampleLength-1][0] = candle['high_price']
+            self.candleMatrix[self.sampleLength-1][1] = candle['low_price']
+            self.candleMatrix[self.sampleLength-1][2] = candle['open_price']
+            self.candleMatrix[self.sampleLength-1][3] = candle['close_price']
+            self.candleMatrix[self.sampleLength-1][4] = candle['volume']
+            self.candleMatrix[self.sampleLength -
+                              1][5] = candle['number_of_trades']
+
+            # lastBet 이 있다면 수익 체크.
+            # 일단은 lastBet 이 가격변동있는지부터 체크하자.
+            if lastBet['betTime'] != 0 and lastBet['betTime']+positionLifetime < candle['close_time']:
+                if candle['high_price'] > lastBet['betPrice']*self.benefit:
+                    # 시그널이 포착됐을때 signalProb 값을 체크. 이 값이 0.5 보다 컸다?
+                    # 그럼 시그널 포착 잘한거니까 가중치를 저장한다음 가중치에 살짝 변화주기.
+                    # 가중치에 변화주는건 맞췄든 틀렸든 할거니까. 그대신 맞춘것만 저장됨으로써 생존하는거지.
+                    lastBet['betTime'] = 0
+                    lastBet['betPrice'] = 0
+                    if prob > 0.5:
+                        # 정답을 맞췄다면 저장하자
+                        self.saveRaisingParamWeight()
+                        self.saveRaisingTimeWeight()
+
+            # timeout case
+            elif lastBet['betTime'] != 0 and lastBet['betTime']+positionLifetime > candle['close_time']:
+                lastBet['betTime'] = 0
+                lastBet['betPrice'] = 0
+
+            # 여기서 param 과 time weight 에 약간 랜덤 변동을 줘야한다.
+            self.loadRaisingParamWeight()
+            for i in range(self.paramNum):
+                self.raisingParamWeight[i] = self.raisingParamWeight[i] + \
+                    random.random()*2-1
+
+            self.loadRaisingTimeWeight()
+            for i in range(self.sampleLength):
+                self.raisingTimeWeight[0][i] = self.raisingTimeWeight[0][i] + \
+                    random.random()*2-1
+
+            # prob 는 사건이 발생할 확률. 여기서 뭔가가 발생한다면, 그때 이게 상승인지 하락인지 체크하는 모델로 넘어감.
+            # 일단은 prob 만 최적화 하기 위해 트레이닝하자.
+
+            x = np.matmul(
+                self.candleMatrix, self.paramWeight)
+
+            prob = np.matmul(
+                self.raisingTimeWeight / np.linalg.norm(self.raisingTimeWeight), x / np.linalg.norm(x))
+
+            if lastBet['betTime'] == 0:
+                lastBet['betTime'] = candle['close_time']
+                lastBet['betPrice'] = candle['close_price']
+        print("done")
+        return
+
+    def trainDownSignalCatch(self):
+        positionLifetime = 1000*60*15  # ms
+
+        benefit = 1.02
+        sampleLength = 5  # 다섯개의 캔들 데이터를 기반으로 판단할 것이다.
+        candleSample = [{"highPrice": "", "lowPrice": "", "openPrice": "",
+                         "closePrice": "", "volume": "", 'numberOfTrades': ""}]
+        paramNum = 6
+        candleMatrix = np.zeros((sampleLength, paramNum))
+        df = pd.read_csv(
+            self.dir+'/data/BTC_kline_15m_2021-01-01_2022-01-07.csv')
+# '/data/BTC_kline_15m_2021-01-01_2022-01-07.csv'
+        # 캔들행렬 초기화
+        prob = 0
+        lastBet = {"betSize": 0, "betTime": 0,
+                   "betDir": "", "betPrice": 0, 'candleType': ""}
+        for i in range(sampleLength):
+            candleMatrix[i][0] = df.iloc[i]['high_price']
+            candleMatrix[i][1] = df.iloc[i]['low_price']
+            candleMatrix[i][2] = df.iloc[i]['open_price']
+            candleMatrix[i][3] = df.iloc[i]['close_price']
+            candleMatrix[i][4] = df.iloc[i]['volume']
+            candleMatrix[i][5] = df.iloc[i]['number_of_trades']
+
+        # 본격적으로 모델 돌아감
+        for i in tqdm(range(sampleLength, len(df)), desc='trainSignalCatch...'):
+            candle = df.iloc[i]
+            # 캔들행렬 업데이트
+            for jj in range(sampleLength-1):
+                candleMatrix[jj] = candleMatrix[jj+1]
+
+            candleMatrix[sampleLength-1][0] = candle['high_price']
+            candleMatrix[sampleLength-1][1] = candle['low_price']
+            candleMatrix[sampleLength-1][2] = candle['open_price']
+            candleMatrix[sampleLength-1][3] = candle['close_price']
+            candleMatrix[sampleLength-1][4] = candle['volume']
+            candleMatrix[sampleLength -
+                         1][5] = candle['number_of_trades']
+
+            # lastBet 이 있다면 수익 체크.
+            # 일단은 lastBet 이 가격변동있는지부터 체크하자.
+            if lastBet['betTime'] != 0 and lastBet['betTime']+self.positionLifetime < candle['close_time']:
+                if candle['high_price'] > lastBet['betPrice']*self.benefit:
+                    # 시그널이 포착됐을때 signalProb 값을 체크. 이 값이 0.5 보다 컸다?
+                    # 그럼 시그널 포착 잘한거니까 가중치를 저장한다음 가중치에 살짝 변화주기.
+                    # 가중치에 변화주는건 맞췄든 틀렸든 할거니까. 그대신 맞춘것만 저장됨으로써 생존하는거지.
+                    lastBet['betTime'] = 0
+                    lastBet['betPrice'] = 0
+                    if prob > 0.5:
+                        # 정답을 맞췄다면 저장하자
+                        self.saveLoweringParamWeight()
+                        self.saveLoweringTimeWeight()
+
+            # timeout case
+            elif lastBet['betTime'] != 0 and lastBet['betTime']+positionLifetime > candle['close_time']:
+                lastBet['betTime'] = 0
+                lastBet['betPrice'] = 0
+
+            # 여기서 param 과 time weight 에 약간 랜덤 변동을 줘야한다.
+            self.loadLoweringParamWeight()
+            for i in range(self.paramNum):
+                self.loweringParamWeight[i] = self.loweringParamWeight[i] + \
+                    random.random()*2-1
+
+            self.loadLoweringTimeWeight()
+            for i in range(self.sampleLength):
+                self.loweringTimeWeight[0][i] = self.loweringTimeWeight[0][i] + \
+                    random.random()*2-1
+
+            # prob 는 사건이 발생할 확률. 여기서 뭔가가 발생한다면, 그때 이게 상승인지 하락인지 체크하는 모델로 넘어감.
+            # 일단은 prob 만 최적화 하기 위해 트레이닝하자.
+
+            x = np.matmul(
+                candleMatrix, self.loweringParamWeight)
+
+            prob = np.matmul(
+                self.loweringTimeWeight / np.linalg.norm(self.loweringTimeWeight), x / np.linalg.norm(x))
+
+            if lastBet['betTime'] == 0:
+                lastBet['betTime'] = candle['close_time']
+                lastBet['betPrice'] = candle['close_price']
+        print("done")
+        return
+
+    def trainBettingSize(self):
+        return
+
+    def testWholeModel(self, testDataDir):
+        money = 1000
+        # 바이낸스 선물 시장가 주문의 경우 수수료 0.04%
+        # 배율이 올라가면 수수료도 올라감.
+        ratio = 5
+        fee = 0.0004*ratio
+        df = pd.read_csv(
+            self.dir+testDataDir)
+        lastBet = {"betSize": 0, "betTime": 0,
+                   "betDir": "", "betPrice": 0, 'candleType': ""}
+        positionLifetime = 1000*60*15  # ms
+        benefit = 1.02
+        losscut = 0.95
+        sampleLength = 5  # 다섯개의 캔들 데이터를 기반으로 판단할 것이다.
+        candleSample = [{"highPrice": "", "lowPrice": "", "openPrice": "",
+                         "closePrice": "", "volume": "", 'numberOfTrades': ""}]
+        paramNum = 6
+        candleMatrix = np.zeros((sampleLength, paramNum))
+        paramWeight = np.ones((paramNum, 1)) / sqrt(paramNum)
+        timeWeight = np.ones((1, sampleLength)) / sqrt(sampleLength)
+        raisingParamWeight = np.ones((paramNum, 1)) / sqrt(paramNum)
+        raisingTimeWeight = np.ones((1, sampleLength)) / sqrt(sampleLength)
+        loweringParamWeight = np.ones((paramNum, 1))/sqrt(paramNum)
+        loweringTimeWeight = np.ones((1, sampleLength))/sqrt(sampleLength)
+        timeWeight = self.loadTimeWeight()
+        paramWeight = self.loadParamWeight()
+        raisingTimeWeight = self.loadRaisingTimeWeight()
+        raisingParamWeight = self.loadRaisingParamWeight()
+        loweringTimeWeight = self.loadLoweringTimeWeight()
+        loweringParamWeight = self.loadLoweringParamWeight()
+        moneyHistory = []
+
+        for i in range(self.sampleLength):
+            candleMatrix[i][0] = df.iloc[i]['high_price']
+            candleMatrix[i][1] = df.iloc[i]['low_price']
+            candleMatrix[i][2] = df.iloc[i]['open_price']
+            candleMatrix[i][3] = df.iloc[i]['close_price']
+            candleMatrix[i][4] = df.iloc[i]['volume']
+            candleMatrix[i][5] = df.iloc[i]['number_of_trades']
+
+        for i in tqdm(range(sampleLength, len(df))):
+            candle = df.iloc[i]
+
+            for jj in range(sampleLength-1):
+                candleMatrix[jj] = candleMatrix[jj+1]
+
+            candleMatrix[sampleLength-1][0] = candle['high_price']
+            candleMatrix[sampleLength-1][1] = candle['low_price']
+            candleMatrix[sampleLength-1][2] = candle['open_price']
+            candleMatrix[sampleLength-1][3] = candle['close_price']
+            candleMatrix[sampleLength-1][4] = candle['volume']
+            candleMatrix[sampleLength -
+                         1][5] = candle['number_of_trades']
+
+            # 수익 체크.
+            if lastBet['betTime'] != 0 and lastBet['betTime']+positionLifetime < candle['close_time']:
+                if lastBet['betDir'] == "up":
+                    if candle['high_price'] > lastBet['betPrice']*benefit:
+                        # 상승배팅 수익 실현
+                        money = (1-fee)*money*benefit
+                        # money = (1-fee)*money * \
+                        #    (1+((candle['high_price'] /
+                        #     lastBet['betPrice'])-1) * ratio)
+                        lastBet['betTime'] = 0
+                        lastBet['betPrice'] = 0
+                        print(f"상승배팅 수익실현: {money}")
+                        moneyHistory.append(money)
+                    elif candle['low_price'] < lastBet['betPrice']*losscut:
+                        # 상승배팅 손해
+                        money = (1-fee)*money*losscut
+                        # money = (1-fee)*money * \
+                        #    (1-(1-(candle['low_price'] /
+                        #     lastBet['betPrice'])) * ratio)
+                        lastBet['betTime'] = 0
+                        lastBet['betPrice'] = 0
+                        print(f"상승배팅 손해: {money}")
+                        moneyHistory.append(money)
+                elif lastBet['betDir'] == "down":
+                    if candle['high_price'] > lastBet['betPrice']*benefit:
+                        # 하락배팅 손해
+                        money = (1-fee)*money * (2-benefit)
+                        # money = (1-fee)*money * \
+                        #    (1-(candle['high_price'] /
+                        #     lastBet['betPrice'] - 1)*ratio)
+                        lastBet['betTime'] = 0
+                        lastBet['betPrice'] = 0
+                        print(f"하락배팅 손해: {money}")
+                        moneyHistory.append(money)
+                    elif candle['low_price'] < lastBet['betPrice']*(2-benefit):
+                        # 하락배팅 수익실현
+                        money = (1-fee)*money*benefit
+                        # money = (1-fee)*money * \
+                        #    (1-((candle['low_price'] /
+                        #     lastBet['betPrice'] - 1)*ratio))
+                        lastBet['betTime'] = 0
+                        lastBet['betPrice'] = 0
+                        print(f"하락배팅 수익실현: {money}")
+                        moneyHistory.append(money)
+            elif lastBet['betTime'] != 0 and lastBet['betTime']+positionLifetime > candle['close_time']:
+                # 시간초과로 인한 포지션 종료.
+                if lastBet['betDir'] == "up":
+                    if candle['close_price'] > lastBet['betPrice']:
+
+                        # 상승배팅 수익 실현
+                        money = (1-fee)*money * \
+                            (1+((candle['close_price'] /
+                             lastBet['betPrice'])-1) * ratio)
+                        lastBet['betTime'] = 0
+                        lastBet['betPrice'] = 0
+                        print(f"타임아웃 상승배팅 수익실현: {money}")
+                        moneyHistory.append(money)
+                    elif candle['close_price'] < lastBet['betPrice']:
+                        # 상승배팅 손해
+                        money = (1-fee)*money * \
+                            (1-(1-(candle['close_price'] /
+                             lastBet['betPrice'])) * ratio)
+                        lastBet['betTime'] = 0
+                        lastBet['betPrice'] = 0
+                        print(f"타임아웃 상승배팅 손해: {money}")
+                        moneyHistory.append(money)
+                elif lastBet['betDir'] == "down":
+                    if candle['close_price'] > lastBet['betPrice']:
+                        # 다운배팅 손해
+                        money = (1-fee)*money * \
+                            (1-(candle['close_price'] /
+                             lastBet['betPrice'] - 1)*ratio)
+                        lastBet['betTime'] = 0
+                        lastBet['betPrice'] = 0
+                        print(f"타임아웃 다운배팅 손해: {money}")
+                        moneyHistory.append(money)
+                    elif candle['close_price'] < lastBet['betPrice']:
+                        # 다운배팅 수익 실현
+                        money = (1-fee)*money * \
+                            (1-((candle['close_price'] /
+                             lastBet['betPrice'] - 1)*ratio))
+                        lastBet['betTime'] = 0
+                        lastBet['betPrice'] = 0
+                        print(f"타임아웃 다운배팅 수익실현: {money}")
+                        moneyHistory.append(money)
+            fluidProb = 0
+            upProb = 0
+            downProb = 0
+            x = np.matmul(
+                candleMatrix, paramWeight)
+
+            fluidProb = np.matmul(
+                timeWeight / np.linalg.norm(timeWeight), x / np.linalg.norm(x))
+            fluidProb = fluidProb[0][0]
+
+            if fluidProb > 0.5 and lastBet['betTime'] == 0:
+                xup = np.matmul(
+                    candleMatrix, raisingParamWeight)
+                upProb = np.matmul(
+                    raisingTimeWeight / np.linalg.norm(raisingTimeWeight), xup / np.linalg.norm(xup))
+                upProb = upProb[0][0]
+
+                xdown = np.matmul(
+                    candleMatrix, loweringParamWeight)
+                downProb = np.matmul(
+                    loweringTimeWeight / np.linalg.norm(loweringTimeWeight), xdown / np.linalg.norm(xdown))
+                downProb = downProb[0][0]
+
+                if upProb > downProb and upProb > 0.8:
+                    lastBet['betDir'] = 'up'
+                    lastBet['betTime'] = candle['close_time']
+                    lastBet['betPrice'] = candle['close_price']
+                    money = money * (1-fee)
+                elif downProb > upProb and downProb > 0.8:
+                    lastBet['betDir'] = 'down'
+                    lastBet['betTime'] = candle['close_time']
+                    lastBet['betPrice'] = candle['close_price']
+                    money = money * (1-fee)
+
+        xline = np.arange(len(moneyHistory))
+        print(f"종료. 금액: {money}")
+        plt.plot(xline, moneyHistory)
+        plt.show()
+
+        return
+
+        def trainWholeModel(self):
+            # 만약 타임아웃 된다면 시그널 캐치 파라미터를 바꾸고
+            # 만약 상승배팅인데 틀렸다면 상승배팅 파라미터를 바꾸고 메모리에 올리고
+            # 만약 하강배팅인데 틀렸다면 하락배팅 파라미터를 바꾸고 메모리에 올리고
+            # 저장을 하는 것은 수익을 올렸을때만 저장을 하자.
+            return
+
 
 # %%
 ca = CandleAnalyzer()
-# ca.trainSignalCatch()
+# for i in range(20):
+#    ca.trainDownSignalCatch()
 
-ca.testSignalCatch()
+#testDataDir = '/data/BTC_kline_1h_210101_211231.csv'
+testDataDir = '/data/future_BTC_15m_2020-01-01_2020-12-31.csv'
+ca.testWholeModel(testDataDir)
+# ca.testSignalCatch()
 
-# %%
-ca = CandleAnalyzer()
-# ca.saveParamWeight()
-ca.loadParamWeight()
-ca.loadTimeWeight()
-print(ca.timeWeight)
-print(ca.paramWeight)
 
 # %%
