@@ -514,7 +514,8 @@ class CandleAnalyzer():
                    "betDir": "", "betPrice": 0, 'candleType': ""}
         positionLifetime = 1000*60*15  # ms
         benefit = 1.02
-        losscut = 0.95
+        benefitCut = 1+(benefit-1)/ratio
+        losscut = 2-benefit
         sampleLength = 5  # 다섯개의 캔들 데이터를 기반으로 판단할 것이다.
         candleSample = [{"highPrice": "", "lowPrice": "", "openPrice": "",
                          "closePrice": "", "volume": "", 'numberOfTrades': ""}]
@@ -559,7 +560,7 @@ class CandleAnalyzer():
             # 수익 체크.
             if lastBet['betTime'] != 0 and lastBet['betTime']+positionLifetime < candle['close_time']:
                 if lastBet['betDir'] == "up":
-                    if candle['high_price'] > lastBet['betPrice']*benefit:
+                    if candle['high_price'] > lastBet['betPrice']*benefitCut:
                         # 상승배팅 수익 실현
                         money = (1-fee)*money*benefit
                         # money = (1-fee)*money * \
@@ -580,7 +581,7 @@ class CandleAnalyzer():
                         print(f"상승배팅 손해: {money}")
                         moneyHistory.append(money)
                 elif lastBet['betDir'] == "down":
-                    if candle['high_price'] > lastBet['betPrice']*benefit:
+                    if candle['high_price'] > lastBet['betPrice']*benefitCut:
                         # 하락배팅 손해
                         money = (1-fee)*money * (2-benefit)
                         # money = (1-fee)*money * \
@@ -590,7 +591,7 @@ class CandleAnalyzer():
                         lastBet['betPrice'] = 0
                         print(f"하락배팅 손해: {money}")
                         moneyHistory.append(money)
-                    elif candle['low_price'] < lastBet['betPrice']*(2-benefit):
+                    elif candle['low_price'] < lastBet['betPrice']*losscut:
                         # 하락배팅 수익실현
                         money = (1-fee)*money*benefit
                         # money = (1-fee)*money * \
