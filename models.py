@@ -141,7 +141,7 @@ class CandleAnalyzer():
             self.loweringTimeWeight = pickle.load(f)
         return self.loweringTimeWeight
 
-    def trainFluid(self, dataName, weightName, probCut=0.6, profitR=1.02, lifetime=1000*60*15):
+    def trainFluid(self, dataName, weightName, probCut=0.6, profitR=1.01, lifetime=1000*60*5*5):
         # initialize
         sampleLength = 10  # N개의 캔들 데이터를 기반으로 판단할 것이다.
         candleSample = [{"highPrice": "", "lowPrice": "", "openPrice": "",
@@ -151,14 +151,11 @@ class CandleAnalyzer():
         candleMatrix = np.zeros((sampleLength, paramNum))
         pWeight = self.loadWeight(filename=f"{weightName}_fluid_p")
         tWeight = self.loadWeight(filename=f"{weightName}_fluid_t")
-        print(pWeight)
-        print(tWeight)
         prob = 0
         lastBet = {"betSize": 0, "betTime": 0,
                    "betDir": "", "betPrice": 0, 'candleType': ""}
         df = pd.read_csv(
             self.dir+'/data/'+dataName)
-
         for i in range(sampleLength):
             candleMatrix[i][0] = df.iloc[i]['high_price']
             candleMatrix[i][1] = df.iloc[i]['low_price']
@@ -166,9 +163,10 @@ class CandleAnalyzer():
             candleMatrix[i][3] = df.iloc[i]['close_price']
             candleMatrix[i][4] = df.iloc[i]['volume']
             candleMatrix[i][5] = df.iloc[i]['number_of_trades']
+
+        # training
         for i in tqdm(range(sampleLength, len(df)), desc='train fluid...'):
             candle = df.iloc[i]
-            # 캔들행렬 업데이트
             for jj in range(sampleLength-1):
                 candleMatrix[jj] = candleMatrix[jj+1]
 
@@ -192,11 +190,14 @@ class CandleAnalyzer():
                         if prob > probCut:
                             self.saveWeight(pWeight, f"{weightName}_fluid_p")
                             self.saveWeight(tWeight, f"{weightName}_fluid_t")
+                        lastBet['betTime'] = 0
+                        lastBet['betSize'] = 0
+                        lastBet['betPrice'] = 0
                 elif lastBet['betTime']+lifetime < candle['close_time']:  # 타임아웃 케이스
                     lastBet['betTime'] = 0
                     lastBet['betSize'] = 0
                     lastBet['betPrice'] = 0
-            else:  # 기존 주문이 없다면 계산하자.
+            if lastBet['betTime'] == 0:
                 pWeight = self.loadWeight(f"{weightName}_fluid_p")
                 for i in range(paramNum):
                     pWeight[i][0] = pWeight[i][0] + random.random()*2-1
@@ -206,11 +207,161 @@ class CandleAnalyzer():
                 x = np.matmul(candleMatrix, pWeight)
                 prob = np.matmul(
                     tWeight / np.linalg.norm(tWeight), x / np.linalg.norm(x))
-                prob = abs(prob[0][0])
+                prob = (prob[0][0])
                 lastBet['betTime'] = candle['close_time']
                 lastBet['betPrice'] = candle['close_price']
 
-    def testFluid(self, dataName, weightName, probCut=0.6, profitR=1.02, lifetime=1000*60*15):
+    def trainUp(self, dataName, weightName, probCut=0.8, profitR=1.01, lifetime=1000*60*5*5):
+        # initialize
+        sampleLength = 10  # N개의 캔들 데이터를 기반으로 판단할 것이다.
+        candleSample = [{"highPrice": "", "lowPrice": "", "openPrice": "",
+                         "closePrice": "", "volume": "", 'numberOfTrades': ""}]
+        lossR = 2-profitR
+        paramNum = 6
+        candleMatrix = np.zeros((sampleLength, paramNum))
+        pWeight = self.loadWeight(filename=f"{weightName}_up_p")
+        tWeight = self.loadWeight(filename=f"{weightName}_up_t")
+        prob = 0
+        lastBet = {"betSize": 0, "betTime": 0,
+                   "betDir": "", "betPrice": 0, 'candleType': ""}
+        df = pd.read_csv(
+            self.dir+'/data/'+dataName)
+
+        for i in range(sampleLength):
+            candleMatrix[i][0] = df.iloc[i]['high_price']
+            candleMatrix[i][1] = df.iloc[i]['low_price']
+            candleMatrix[i][2] = df.iloc[i]['open_price']
+            candleMatrix[i][3] = df.iloc[i]['close_price']
+            candleMatrix[i][4] = df.iloc[i]['volume']
+            candleMatrix[i][5] = df.iloc[i]['number_of_trades']
+        for i in tqdm(range(sampleLength, len(df)), desc='train up...'):
+            candle = df.iloc[i]
+            # 캔들행렬 업데이트
+            for jj in range(sampleLength-1):
+                candleMatrix[jj] = candleMatrix[jj+1]
+
+            candleMatrix[sampleLength-1][0] = candle['high_price']
+            candleMatrix[sampleLength-1][1] = candle['low_price']
+            candleMatrix[sampleLength-1][2] = candle['open_price']
+            candleMatrix[sampleLength-1][3] = candle['close_price']
+            candleMatrix[sampleLength-1][4] = candle['volume']
+            candleMatrix[sampleLength -
+                         1][5] = candle['number_of_trades']
+
+            # 기존 주문이 있는지 확인하고
+            # 있다면 타임아웃인지 아닌지 확인하고
+            # 타임아웃 아니라면 변동성 있었는지 체크하고
+            # 타임아웃이었다면 버리고.
+            if lastBet['betTime'] != 0:  # 기존 주문이 있다.
+                if lastBet['betTime']+lifetime > candle['close_time']:  # 아직 타임아웃이 아니다
+                    if candle['high_price'] > lastBet['betPrice']*profitR:  # 가격이 상승했다
+                        # 지금 변동성이 있네?
+                        # 그럼 얘가 정답을 맞췄는지 체크해 볼까?
+                        if prob > probCut:
+                            self.saveWeight(pWeight, f"{weightName}_up_p")
+                            self.saveWeight(tWeight, f"{weightName}_up_t")
+                        lastBet['betTime'] = 0
+                        lastBet['betSize'] = 0
+                        lastBet['betPrice'] = 0
+                    elif candle['low_price'] < lastBet['betPrice']*lossR:  # price down. incorrect
+                        lastBet['betTime'] = 0
+                        lastBet['betSize'] = 0
+                        lastBet['betPrice'] = 0
+                elif lastBet['betTime']+lifetime < candle['close_time']:  # 타임아웃 케이스
+                    lastBet['betTime'] = 0
+                    lastBet['betSize'] = 0
+                    lastBet['betPrice'] = 0
+            if lastBet['betTime'] == 0:
+                pWeight = self.loadWeight(f"{weightName}_up_p")
+                for i in range(paramNum):
+                    pWeight[i][0] = pWeight[i][0] + random.random()*2-1
+                tWeight = self.loadWeight(f"{weightName}_up_t")
+                for i in range(sampleLength):
+                    tWeight[0][i] = tWeight[0][i] + random.random()*2-1
+                x = np.matmul(candleMatrix, pWeight)
+                prob = np.matmul(
+                    tWeight / np.linalg.norm(tWeight), x / np.linalg.norm(x))
+                prob = (prob[0][0])
+                lastBet['betTime'] = candle['close_time']
+                lastBet['betPrice'] = candle['close_price']
+
+    def trainDown(self, dataName, weightName, probCut=0.8, profitR=1.01, lifetime=1000*60*5*5):
+        # initialize
+        sampleLength = 10  # N개의 캔들 데이터를 기반으로 판단할 것이다.
+        candleSample = [{"highPrice": "", "lowPrice": "", "openPrice": "",
+                         "closePrice": "", "volume": "", 'numberOfTrades': ""}]
+        lossR = 2-profitR
+        paramNum = 6
+        candleMatrix = np.zeros((sampleLength, paramNum))
+        pWeight = self.loadWeight(filename=f"{weightName}_down_p")
+        tWeight = self.loadWeight(filename=f"{weightName}_down_t")
+        prob = 0
+        lastBet = {"betSize": 0, "betTime": 0,
+                   "betDir": "", "betPrice": 0, 'candleType': ""}
+        df = pd.read_csv(
+            self.dir+'/data/'+dataName)
+
+        for i in range(sampleLength):
+            candleMatrix[i][0] = df.iloc[i]['high_price']
+            candleMatrix[i][1] = df.iloc[i]['low_price']
+            candleMatrix[i][2] = df.iloc[i]['open_price']
+            candleMatrix[i][3] = df.iloc[i]['close_price']
+            candleMatrix[i][4] = df.iloc[i]['volume']
+            candleMatrix[i][5] = df.iloc[i]['number_of_trades']
+        for i in tqdm(range(sampleLength, len(df)), desc='train down...'):
+            candle = df.iloc[i]
+            # 캔들행렬 업데이트
+            for jj in range(sampleLength-1):
+                candleMatrix[jj] = candleMatrix[jj+1]
+
+            candleMatrix[sampleLength-1][0] = candle['high_price']
+            candleMatrix[sampleLength-1][1] = candle['low_price']
+            candleMatrix[sampleLength-1][2] = candle['open_price']
+            candleMatrix[sampleLength-1][3] = candle['close_price']
+            candleMatrix[sampleLength-1][4] = candle['volume']
+            candleMatrix[sampleLength -
+                         1][5] = candle['number_of_trades']
+
+            # 기존 주문이 있는지 확인하고
+            # 있다면 타임아웃인지 아닌지 확인하고
+            # 타임아웃 아니라면 변동성 있었는지 체크하고
+            # 타임아웃이었다면 버리고.
+            if lastBet['betTime'] != 0:  # 기존 주문이 있다.
+                if lastBet['betTime']+lifetime > candle['close_time']:  # 아직 타임아웃이 아니다
+                    if candle['low_price'] < lastBet['betPrice']*lossR:  # 가격이 상승했다
+                        # 지금 변동성이 있네?
+                        # 그럼 얘가 정답을 맞췄는지 체크해 볼까?
+                        if prob > probCut:
+                            self.saveWeight(pWeight, f"{weightName}_down_p")
+                            self.saveWeight(tWeight, f"{weightName}_down_t")
+                        lastBet['betTime'] = 0
+                        lastBet['betSize'] = 0
+                        lastBet['betPrice'] = 0
+                    # price down. incorrect
+                    elif candle['high_price'] > lastBet['betPrice']*profitR:
+                        lastBet['betTime'] = 0
+                        lastBet['betSize'] = 0
+                        lastBet['betPrice'] = 0
+
+                elif lastBet['betTime']+lifetime < candle['close_time']:  # 타임아웃 케이스
+                    lastBet['betTime'] = 0
+                    lastBet['betSize'] = 0
+                    lastBet['betPrice'] = 0
+            if lastBet['betTime'] == 0:  # 기존 주문이 없다.
+                pWeight = self.loadWeight(f"{weightName}_down_p")
+                for i in range(paramNum):
+                    pWeight[i][0] = pWeight[i][0] + random.random()*2-1
+                tWeight = self.loadWeight(f"{weightName}_down_t")
+                for i in range(sampleLength):
+                    tWeight[0][i] = tWeight[0][i] + random.random()*2-1
+                x = np.matmul(candleMatrix, pWeight)
+                prob = np.matmul(
+                    tWeight / np.linalg.norm(tWeight), x / np.linalg.norm(x))
+                prob = (prob[0][0])
+                lastBet['betTime'] = candle['close_time']
+                lastBet['betPrice'] = candle['close_price']
+
+    def testFluid(self, dataName, weightName, probCut=0.6, profitR=1.01, lifetime=1000*60*25):
         # initialize
         sampleLength = 10  # N개의 캔들 데이터를 기반으로 판단할 것이다.
         candleSample = [{"highPrice": "", "lowPrice": "", "openPrice": "",
@@ -218,6 +369,7 @@ class CandleAnalyzer():
         lossR = 2-profitR
         paramNum = 6
         correct = 0
+        incorrect = 0
         largeN = 0
         candleMatrix = np.zeros((sampleLength, paramNum))
         pWeight = self.loadWeight(filename=f"{weightName}_fluid_p")
@@ -262,19 +414,181 @@ class CandleAnalyzer():
                             correct += 1
                         # 변동성은 있었는데 얘가 제대로 맞추질 못했네
                         largeN += 1
+                        lastBet['betTime'] = 0
+                        lastBet['betSize'] = 0
+                        lastBet['betPrice'] = 0
 
                 elif lastBet['betTime']+lifetime < candle['close_time']:  # 타임아웃 케이스
                     lastBet['betTime'] = 0
                     lastBet['betSize'] = 0
                     lastBet['betPrice'] = 0
-            else:  # 기존 주문이 없다면 계산하자.
+                    incorrect += 1
+                    largeN += 1
+            if lastBet['betTime'] == 0:  # 기존 주문이 없다.
                 x = np.matmul(candleMatrix, pWeight)
                 prob = np.matmul(
                     tWeight / np.linalg.norm(tWeight), x / np.linalg.norm(x))
-                prob = abs(prob[0][0])
+                prob = (prob[0][0])
                 lastBet['betTime'] = candle['close_time']
                 lastBet['betPrice'] = candle['close_price']
-        print(f"정답: {correct}, 오답: {largeN-correct}, 정답률: {100*correct/largeN}%")
+        print(
+            f"정답: {correct}, 타임아웃: {incorrect}, 오답: {largeN-correct}, 정답률: {100*correct/largeN}%, 타임아웃률: {100*incorrect/largeN}%")
+
+    def testUp(self, dataName, weightName, probCut=0.8, profitR=1.01, lifetime=1000*60*25):
+        # initialize
+        sampleLength = 10  # N개의 캔들 데이터를 기반으로 판단할 것이다.
+        candleSample = [{"highPrice": "", "lowPrice": "", "openPrice": "",
+                         "closePrice": "", "volume": "", 'numberOfTrades': ""}]
+        lossR = 2-profitR
+        paramNum = 6
+        correct = 0
+        incorrect = 0
+        largeN = 0
+        candleMatrix = np.zeros((sampleLength, paramNum))
+        pWeight = self.loadWeight(filename=f"{weightName}_up_p")
+        tWeight = self.loadWeight(filename=f"{weightName}_up_t")
+        prob = 0
+        lastBet = {"betSize": 0, "betTime": 0,
+                   "betDir": "", "betPrice": 0, 'candleType': ""}
+        df = pd.read_csv(
+            self.dir+'/data/'+dataName)
+
+        for i in range(sampleLength):
+            candleMatrix[i][0] = df.iloc[i]['high_price']
+            candleMatrix[i][1] = df.iloc[i]['low_price']
+            candleMatrix[i][2] = df.iloc[i]['open_price']
+            candleMatrix[i][3] = df.iloc[i]['close_price']
+            candleMatrix[i][4] = df.iloc[i]['volume']
+            candleMatrix[i][5] = df.iloc[i]['number_of_trades']
+        for i in tqdm(range(sampleLength, len(df)), desc='test up...'):
+            candle = df.iloc[i]
+            # 캔들행렬 업데이트
+            for jj in range(sampleLength-1):
+                candleMatrix[jj] = candleMatrix[jj+1]
+
+            candleMatrix[sampleLength-1][0] = candle['high_price']
+            candleMatrix[sampleLength-1][1] = candle['low_price']
+            candleMatrix[sampleLength-1][2] = candle['open_price']
+            candleMatrix[sampleLength-1][3] = candle['close_price']
+            candleMatrix[sampleLength-1][4] = candle['volume']
+            candleMatrix[sampleLength -
+                         1][5] = candle['number_of_trades']
+
+            # 기존 주문이 있는지 확인하고
+            # 있다면 타임아웃인지 아닌지 확인하고
+            # 타임아웃 아니라면 변동성 있었는지 체크하고
+            # 타임아웃이었다면 버리고.
+            if lastBet['betTime'] != 0:  # 기존 주문이 있다.
+                if lastBet['betTime']+lifetime > candle['close_time']:  # 아직 타임아웃이 아니다
+                    if candle['high_price'] > lastBet['betPrice']*profitR:
+                        # 지금 변동성이 있네?
+                        # 그럼 얘가 정답을 맞췄는지 체크해 볼까?
+                        if prob > probCut:
+                            correct += 1
+                            lastBet['betTime'] = 0
+                            lastBet['betSize'] = 0
+                            lastBet['betPrice'] = 0
+                        # 변동성은 있었는데 얘가 제대로 맞추질 못했네
+                        largeN += 1
+                    elif candle['low_price'] < lastBet['betPrice']*lossR:
+                        incorrect += 1
+                        largeN += 1
+                        lastBet['betTime'] = 0
+                        lastBet['betSize'] = 0
+                        lastBet['betPrice'] = 0
+
+                elif lastBet['betTime']+lifetime < candle['close_time']:  # 타임아웃 케이스
+                    lastBet['betTime'] = 0
+                    lastBet['betSize'] = 0
+                    lastBet['betPrice'] = 0
+                    largeN += 1
+            if lastBet['betTime'] == 0:  # 기존 주문이 있다.
+                x = np.matmul(candleMatrix, pWeight)
+                prob = np.matmul(
+                    tWeight / np.linalg.norm(tWeight), x / np.linalg.norm(x))
+                prob = (prob[0][0])
+                lastBet['betTime'] = candle['close_time']
+                lastBet['betPrice'] = candle['close_price']
+        print(
+            f"정답: {correct}, 타임아웃: {incorrect}, 오답: {largeN-correct}, 정답률: {100*correct/largeN}%, 타임아웃률: {100*incorrect/largeN}%")
+
+    def testDown(self, dataName, weightName, probCut=0.8, profitR=1.01, lifetime=1000*60*25):
+        # initialize
+        sampleLength = 10  # N개의 캔들 데이터를 기반으로 판단할 것이다.
+        candleSample = [{"highPrice": "", "lowPrice": "", "openPrice": "",
+                         "closePrice": "", "volume": "", 'numberOfTrades': ""}]
+        lossR = 2-profitR
+        paramNum = 6
+        correct = 0
+        incorrect = 0
+        largeN = 0
+        candleMatrix = np.zeros((sampleLength, paramNum))
+        pWeight = self.loadWeight(filename=f"{weightName}_down_p")
+        tWeight = self.loadWeight(filename=f"{weightName}_down_t")
+        prob = 0
+        lastBet = {"betSize": 0, "betTime": 0,
+                   "betDir": "", "betPrice": 0, 'candleType': ""}
+        df = pd.read_csv(
+            self.dir+'/data/'+dataName)
+
+        for i in range(sampleLength):
+            candleMatrix[i][0] = df.iloc[i]['high_price']
+            candleMatrix[i][1] = df.iloc[i]['low_price']
+            candleMatrix[i][2] = df.iloc[i]['open_price']
+            candleMatrix[i][3] = df.iloc[i]['close_price']
+            candleMatrix[i][4] = df.iloc[i]['volume']
+            candleMatrix[i][5] = df.iloc[i]['number_of_trades']
+        for i in tqdm(range(sampleLength, len(df)), desc='test down...'):
+            candle = df.iloc[i]
+            # 캔들행렬 업데이트
+            for jj in range(sampleLength-1):
+                candleMatrix[jj] = candleMatrix[jj+1]
+
+            candleMatrix[sampleLength-1][0] = candle['high_price']
+            candleMatrix[sampleLength-1][1] = candle['low_price']
+            candleMatrix[sampleLength-1][2] = candle['open_price']
+            candleMatrix[sampleLength-1][3] = candle['close_price']
+            candleMatrix[sampleLength-1][4] = candle['volume']
+            candleMatrix[sampleLength -
+                         1][5] = candle['number_of_trades']
+
+            # 기존 주문이 있는지 확인하고
+            # 있다면 타임아웃인지 아닌지 확인하고
+            # 타임아웃 아니라면 변동성 있었는지 체크하고
+            # 타임아웃이었다면 버리고.
+            if lastBet['betTime'] != 0:  # 기존 주문이 있다.
+                if lastBet['betTime']+lifetime > candle['close_time']:  # 아직 타임아웃이 아니다
+                    if candle['low_price'] < lastBet['betPrice']*lossR:
+                        # 지금 변동성이 있네?
+                        # 그럼 얘가 정답을 맞췄는지 체크해 볼까?
+                        if prob > probCut:
+                            correct += 1
+                            lastBet['betTime'] = 0
+                            lastBet['betSize'] = 0
+                            lastBet['betPrice'] = 0
+                        # 변동성은 있었는데 얘가 제대로 맞추질 못했네
+                        largeN += 1
+                    elif candle['high_price'] > lastBet['betPrice']*profitR:
+                        incorrect += 1
+                        largeN += 1
+                        lastBet['betTime'] = 0
+                        lastBet['betSize'] = 0
+                        lastBet['betPrice'] = 0
+
+                elif lastBet['betTime']+lifetime < candle['close_time']:  # 타임아웃 케이스
+                    lastBet['betTime'] = 0
+                    lastBet['betSize'] = 0
+                    lastBet['betPrice'] = 0
+                    largeN += 1
+            if lastBet['betTime'] == 0:  # 기존 주문이 있다.
+                x = np.matmul(candleMatrix, pWeight)
+                prob = np.matmul(
+                    tWeight / np.linalg.norm(tWeight), x / np.linalg.norm(x))
+                prob = (prob[0][0])
+                lastBet['betTime'] = candle['close_time']
+                lastBet['betPrice'] = candle['close_price']
+        print(
+            f"정답: {correct}, 타임아웃: {incorrect}, 오답: {largeN-correct}, 정답률: {100*correct/largeN}%, 타임아웃률: {100*incorrect/largeN}%")
 
     def trainUpSignal(self):
         return
@@ -808,8 +1122,18 @@ class CandleAnalyzer():
 # %%
 ca = CandleAnalyzer()
 #ca.createWeights("220220", "5m")
-#ca.trainFluid("future_BTC_5m_2022-01-01_2022-01-31.csv", "220220_5m")
-ca.testFluid("future_BTC_5m_2021-01-01_2021-12-31.csv", "220220_5m")
+for i in range(300):
+    ca.trainFluid("future_BTC_5m_2022-01-01_2022-01-31.csv", "220220_5m")
+    ca.trainUp("future_BTC_5m_2022-01-01_2022-01-31.csv", "220220_5m")
+    ca.trainDown("future_BTC_5m_2022-01-01_2022-01-31.csv", "220220_5m")
+    #ca.testFluid("future_BTC_5m_2021-01-01_2021-12-31.csv", "220220_5m")
+    #ca.testUp("future_BTC_5m_2021-01-01_2021-12-31.csv", "220220_5m")
+    #ca.testDown("future_BTC_5m_2021-01-01_2021-12-31.csv", "220220_5m")
+ca.testFluid("future_BTC_5m_2022-01-01_2022-01-31.csv", "220220_5m")
+ca.testUp("future_BTC_5m_2022-01-01_2022-01-31.csv", "220220_5m")
+ca.testDown("future_BTC_5m_2022-01-01_2022-01-31.csv", "220220_5m")
+
+
 #filename = "future_BTC_5m_2021-01-01_2021-12-31.csv"
 filename = "BTC_kline_15m_2021-01-01_2022-01-07.csv"
 #ca.createWeights("202220", "15m")
