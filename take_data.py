@@ -50,6 +50,6 @@ def take_future_data(symbol="BTC", interval="1m", start="2022-01-01", end="2022-
     #               "/data/"+symbol+"_kline_"+interval+"_200101_201231.csv", sep=',')
 
 
-take_future_data("BTC", "5m", "2022-02-01", "2022-02-19")
+take_future_data("BTC", "15m", "2021-01-01", "2021-12-31")
 
 # %%

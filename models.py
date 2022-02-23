@@ -35,7 +35,7 @@ class CandleAnalyzer():
     dollarBar = pd.DataFrame()
     lastBet = {"betSize": 0, "betTime": 0,
                "betDir": "", "betPrice": 0, 'candleType': ""}
-    positionLifetime = 1000*60*15  # ms
+    positionLifetime = 1000*60*60  # ms. 포지션 수명은 1시간 정도로.
     # positionLifetime = 4 # 4개의 sample 시간동안 포지션을 살려둔다.
     benefit = 1.02
     sampleLength = 10  # 다섯개의 캔들 데이터를 기반으로 판단할 것이다.
@@ -89,12 +89,17 @@ class CandleAnalyzer():
             weight = pickle.load(f)
         return weight
 
-    def trainFluid(self, dataName, weightName, probCut=0.6, profitR=1.01, lifetime=1000*60*5*5):
+    def trainFluid(self, dataName, weightName, probCut=0.8, profitR=1.01, lifetime=1000*60*5*5):
         # initialize
-        sampleLength = 10  # N개의 캔들 데이터를 기반으로 판단할 것이다.
+        # 1분봉, 5분봉, 15분봉, 1시간봉 모두 함께 보자.
+        #  1시간봉 세개, 15분봉 4*3 = 12 개, 5분봉 12*3=36개, 1분봉 36*5=180개
+        # 손절컷은 3~5%정도로. 10배율 한다니 실질 가격변동은 0.3~0.5% 정도이네.
+
+        sampleLength = self.sampleLength  # N개의 캔들 데이터를 기반으로 판단할 것이다.
         candleSample = [{"highPrice": "", "lowPrice": "", "openPrice": "",
                          "closePrice": "", "volume": "", 'numberOfTrades': ""}]
         lossR = 2-profitR
+
         paramNum = 6
         candleMatrix = np.zeros((sampleLength, paramNum))
         pWeight = self.loadWeight(filename=f"{weightName}_fluid_p")
@@ -105,16 +110,19 @@ class CandleAnalyzer():
                    "betDir": "", "betPrice": 0, 'candleType': ""}
         df = pd.read_csv(
             self.dir+'/data/'+dataName)
+        start = floor(len(df)*random.random()/2)
+        end = max(start+10*sampleLength,
+                  floor((len(df)-start)*random.random()+start))
         for i in range(sampleLength):
-            candleMatrix[i][0] = df.iloc[i]['high_price']
-            candleMatrix[i][1] = df.iloc[i]['low_price']
-            candleMatrix[i][2] = df.iloc[i]['open_price']
-            candleMatrix[i][3] = df.iloc[i]['close_price']
-            candleMatrix[i][4] = df.iloc[i]['volume']
-            candleMatrix[i][5] = df.iloc[i]['number_of_trades']
+            candleMatrix[i][0] = df.iloc[start+i]['high_price']
+            candleMatrix[i][1] = df.iloc[start+i]['low_price']
+            candleMatrix[i][2] = df.iloc[start+i]['open_price']
+            candleMatrix[i][3] = df.iloc[start+i]['close_price']
+            candleMatrix[i][4] = df.iloc[start+i]['volume']
+            candleMatrix[i][5] = df.iloc[start+i]['number_of_trades']
 
         # training
-        for i in tqdm(range(sampleLength, len(df)), desc='train fluid...'):
+        for i in tqdm(range(start+sampleLength, end), desc='train fluid...'):
             candle = df.iloc[i]
             for jj in range(sampleLength-1):
                 candleMatrix[jj] = candleMatrix[jj+1]
@@ -147,17 +155,23 @@ class CandleAnalyzer():
                     lastBet['betSize'] = 0
                     lastBet['betPrice'] = 0
             if lastBet['betTime'] == 0:
+
                 pWeight = self.loadWeight(f"{weightName}_fluid_p")
+                print(pWeight)
                 for i in range(paramNum):
-                    pWeight[i][0] = pWeight[i][0] + random.random()*2-1
+                    pWeight[i][0] = pWeight[i][0] + \
+                        pWeight[i][0]*2*(random.random()-1)*0.1
                 tWeight = self.loadWeight(f"{weightName}_fluid_t")
+                print(tWeight)
                 for i in range(sampleLength):
-                    tWeight[0][i] = tWeight[0][i] + random.random()*2-1
+                    tWeight[0][i] = tWeight[0][i] + \
+                        tWeight[0][i]*2*(random.random()-1)*0.1
                 lastProb = prob
                 x = np.matmul(candleMatrix, pWeight)
                 prob = np.matmul(
-                    tWeight / np.linalg.norm(tWeight), x / np.linalg.norm(x))
-                prob = sigmoid(3, prob[0][0])
+                    tWeight, x)
+                prob = sigmoid(1, prob[0][0])
+                print(f"prob: {prob}")
                 lastBet['betTime'] = candle['close_time']
                 lastBet['betPrice'] = candle['close_price']
 
@@ -176,7 +190,9 @@ class CandleAnalyzer():
                    "betDir": "", "betPrice": 0, 'candleType': ""}
         df = pd.read_csv(
             self.dir+'/data/'+dataName)
-
+        start = floor(len(df)*random.random()/2)
+        end = max(start+10*sampleLength,
+                  floor((len(df)-start)*random.random()+start))
         for i in range(sampleLength):
             candleMatrix[i][0] = df.iloc[i]['high_price']
             candleMatrix[i][1] = df.iloc[i]['low_price']
@@ -224,10 +240,12 @@ class CandleAnalyzer():
             if lastBet['betTime'] == 0:
                 pWeight = self.loadWeight(f"{weightName}_up_p")
                 for i in range(paramNum):
-                    pWeight[i][0] = pWeight[i][0] + random.random()*2-1
+                    pWeight[i][0] = pWeight[i][0] + \
+                        pWeight[i][0]*random.random()*0.1
                 tWeight = self.loadWeight(f"{weightName}_up_t")
                 for i in range(sampleLength):
-                    tWeight[0][i] = tWeight[0][i] + random.random()*2-1
+                    tWeight[0][i] = tWeight[0][i] + \
+                        tWeight[0][i]*random.random()*0.1
                 x = np.matmul(candleMatrix, pWeight)
                 prob = np.matmul(
                     tWeight / np.linalg.norm(tWeight), x / np.linalg.norm(x))
@@ -250,7 +268,9 @@ class CandleAnalyzer():
                    "betDir": "", "betPrice": 0, 'candleType': ""}
         df = pd.read_csv(
             self.dir+'/data/'+dataName)
-
+        start = floor(len(df)*random.random()/2)
+        end = max(start+10*sampleLength,
+                  floor((len(df)-start)*random.random()+start))
         for i in range(sampleLength):
             candleMatrix[i][0] = df.iloc[i]['high_price']
             candleMatrix[i][1] = df.iloc[i]['low_price']
@@ -745,7 +765,7 @@ class CandleAnalyzer():
 # %%
 ca = CandleAnalyzer()
 #ca.saveWeight([1, 1, 1, 1], "test")
-#ca.createWeights("220222", "15m")
+ca.createWeights("220222", "15m")
 #ca.trainFluid("future_BTC_15m_2022-01-01_2022-01-31.csv", "220220_5m")
 for i in range(1):
     print("학습")
