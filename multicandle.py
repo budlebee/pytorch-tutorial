@@ -244,16 +244,30 @@ class MultiCandleAnalyzer():
             mat[i][6] = df.iloc[i]['close_time']
         return mat
 
-    def testTrade(self, versionName, startday, endday):
-        initMoney = 1000
-        len1m = len(tw1mF[0])  # 30
-        len5m = len(tw5mF[0])  # 10
-        len15m = len(tw15mF[0])  # 10
-        len1h = len(tw1hF[0])  # 5
+    def trainModel(self, versionName, startday, endday, upThr, downThr, profitR, lossR, ratio):
+        fee = 0.0004*ratio
+        money = 1000
+        apiTroubleLoss = fee/ratio
+        slipageLoss = fee/ratio
 
+        weightObj = self.loadJson(f"weights/{versionName}.json")
+        weights1mP = weightObj['weights1mP']
+        weights5mP = weightObj['weights5mP']
+        weights15mP = weightObj['weights15mP']
+        weights1hP = weightObj['weights1hP']
+        weights1mT = weightObj['weights1mT']
+        weights5mT = weightObj['weights5mT']
+        weights15mT = weightObj['weights15mT']
+        weights1hT = weightObj['weights1hT']
+        weightsTot = weightObj['weightsTot']
+
+        len1m = len(weights1mT)  # 30
+        len5m = len(weights5mT)  # 15
+        len15m = len(weights15mT)  # 15
+        len1h = len(weights1hT)  # 5
         mat1m = np.zeros((len1m, self.paramNum))  # 30 x 7
-        mat5m = np.zeros((len5m, self.paramNum))  # 10 x 7
-        mat15m = np.zeros((len15m, self.paramNum))  # 10 x 7
+        mat5m = np.zeros((len5m, self.paramNum))  # 15 x 7
+        mat15m = np.zeros((len15m, self.paramNum))  # 15 x 7
         mat1h = np.zeros((len1h, self.paramNum))  # 5 x 7
 
         lastBet = {"betSize": 0, "betTime": 0,
@@ -271,447 +285,15 @@ class MultiCandleAnalyzer():
         mat5m = self.initMat(mat5m, df5m, len5m)
         mat15m = self.initMat(mat15m, df15m, len15m)
         mat1h = self.initMat(mat1h, df1h, len1h)
-        # 바이낸스 선물 시장가 주문의 경우 수수료 0.04%. 0.0004.
-        # 배율이 올라가면 수수료도 올라감.
-        ratio = 5
-        fee = 0.0004*ratio
-        apiTroubleLoss = 0.0004  # *ratio
-        slipageLoss = 0.0004  # *ratio
-        df = pd.read_csv(
-            self.dir+testDataDir)
-        lastBet = {"betSize": 0, "betTime": 0,
-                   "betDir": "", "betPrice": 0, 'candleType': ""}
-        positionLifetime = 1000*60*15  # ms
-        benefit = 1.02
-        benefitCut = 1+(benefit-1)/ratio
-        losscut = 2-benefit
-        sampleLength = 5  # 다섯개의 캔들 데이터를 기반으로 판단할 것이다.
-        candleSample = [{"highPrice": "", "lowPrice": "", "openPrice": "",
-                         "closePrice": "", "volume": "", 'numberOfTrades': ""}]
-        paramNum = 6
-        candleMatrix = np.zeros((sampleLength, paramNum))
-        paramWeight = np.ones((paramNum, 1)) / sqrt(paramNum)
-        timeWeight = np.ones((1, sampleLength)) / sqrt(sampleLength)
-        raisingParamWeight = np.ones((paramNum, 1)) / sqrt(paramNum)
-        raisingTimeWeight = np.ones((1, sampleLength)) / sqrt(sampleLength)
-        loweringParamWeight = np.ones((paramNum, 1))/sqrt(paramNum)
-        loweringTimeWeight = np.ones((1, sampleLength))/sqrt(sampleLength)
-        timeWeight = self.loadTimeWeight(date, interval)
-        paramWeight = self.loadParamWeight(date, interval)
-        raisingTimeWeight = self.loadRaisingTimeWeight(date, interval)
-        raisingParamWeight = self.loadRaisingParamWeight(date, interval)
-        loweringTimeWeight = self.loadLoweringTimeWeight(date, interval)
-        loweringParamWeight = self.loadLoweringParamWeight(date, interval)
-        print(raisingTimeWeight)
+        prob = 0
         moneyHistory = []
-
-        for i in range(self.sampleLength):
-            candleMatrix[i][0] = df.iloc[i]['high_price']
-            candleMatrix[i][1] = df.iloc[i]['low_price']
-            candleMatrix[i][2] = df.iloc[i]['open_price']
-            candleMatrix[i][3] = df.iloc[i]['close_price']
-            candleMatrix[i][4] = df.iloc[i]['volume']
-            candleMatrix[i][5] = df.iloc[i]['number_of_trades']
-
-        for i in tqdm(range(sampleLength, floor(len(df)/300))):
-            candle = df.iloc[i]
-
-            for jj in range(sampleLength-1):
-                candleMatrix[jj] = candleMatrix[jj+1]
-
-            candleMatrix[sampleLength-1][0] = candle['high_price']
-            candleMatrix[sampleLength-1][1] = candle['low_price']
-            candleMatrix[sampleLength-1][2] = candle['open_price']
-            candleMatrix[sampleLength-1][3] = candle['close_price']
-            candleMatrix[sampleLength-1][4] = candle['volume']
-            candleMatrix[sampleLength -
-                         1][5] = candle['number_of_trades']
-
-            # 수익 체크.
-            if lastBet['betTime'] != 0 and lastBet['betTime']+positionLifetime > candle['close_time']:
-                if lastBet['betDir'] == "up":
-                    if candle['high_price'] > lastBet['betPrice']*benefitCut:
-                        # 상승배팅 수익 실현
-                        money = (1-apiTroubleLoss)*(1-slipageLoss) * \
-                            (1-fee)*money*benefit
-                        # money = (1-fee)*money * \
-                        #    (1+((candle['high_price'] /
-                        #     lastBet['betPrice'])-1) * ratio)
-                        lastBet['betTime'] = 0
-                        lastBet['betPrice'] = 0
-                        print(f"상승배팅 수익실현: {money}")
-                        moneyHistory.append(money)
-                    elif candle['low_price'] < lastBet['betPrice']*losscut:
-                        # 상승배팅 손해
-                        money = (1-apiTroubleLoss)*(1-slipageLoss) * \
-                            (1-fee)*money*losscut
-                        # money = (1-fee)*money * \
-                        #    (1-(1-(candle['low_price'] /
-                        #     lastBet['betPrice'])) * ratio)
-                        lastBet['betTime'] = 0
-                        lastBet['betPrice'] = 0
-                        print(f"상승배팅 손해: {money}")
-                        moneyHistory.append(money)
-                elif lastBet['betDir'] == "down":
-                    if candle['high_price'] > lastBet['betPrice']*benefitCut:
-                        # 하락배팅 손해
-                        money = (1-apiTroubleLoss)*(1-slipageLoss) * \
-                            (1-fee)*money * (2-benefit)
-                        # money = (1-fee)*money * \
-                        #    (1-(candle['high_price'] /
-                        #     lastBet['betPrice'] - 1)*ratio)
-                        lastBet['betTime'] = 0
-                        lastBet['betPrice'] = 0
-                        print(f"하락배팅 손해: {money}")
-                        moneyHistory.append(money)
-                    elif candle['low_price'] < lastBet['betPrice']*losscut:
-                        # 하락배팅 수익실현
-                        money = (1-apiTroubleLoss)*(1-slipageLoss) * \
-                            (1-fee)*money*benefit
-                        # money = (1-fee)*money * \
-                        #    (1-((candle['low_price'] /
-                        #     lastBet['betPrice'] - 1)*ratio))
-                        lastBet['betTime'] = 0
-                        lastBet['betPrice'] = 0
-                        print(f"하락배팅 수익실현: {money}")
-                        moneyHistory.append(money)
-            elif lastBet['betTime'] != 0 and lastBet['betTime']+positionLifetime < candle['close_time']:
-                # 시간초과로 인한 포지션 종료.
-                if lastBet['betDir'] == "up":
-                    if candle['close_price'] > lastBet['betPrice']:
-
-                        # 상승배팅 수익 실현
-                        money = (1-apiTroubleLoss)*(1-slipageLoss)*(1-fee)*money * \
-                            (1+((candle['close_price'] /
-                             lastBet['betPrice'])-1) * ratio)
-                        lastBet['betTime'] = 0
-                        lastBet['betPrice'] = 0
-                        print(f"타임아웃 상승배팅 수익실현: {money}")
-                        moneyHistory.append(money)
-                    elif candle['close_price'] < lastBet['betPrice']:
-                        # 상승배팅 손해
-                        money = (1-apiTroubleLoss)*(1-slipageLoss)*(1-fee)*money * \
-                            (1-(1-(candle['close_price'] /
-                             lastBet['betPrice'])) * ratio)
-                        lastBet['betTime'] = 0
-                        lastBet['betPrice'] = 0
-                        print(f"타임아웃 상승배팅 손해: {money}")
-                        moneyHistory.append(money)
-                elif lastBet['betDir'] == "down":
-                    if candle['close_price'] > lastBet['betPrice']:
-                        # 다운배팅 손해
-                        money = (1-apiTroubleLoss)*(1-slipageLoss)*(1-fee)*money * \
-                            (1-(candle['close_price'] /
-                             lastBet['betPrice'] - 1)*ratio)
-                        lastBet['betTime'] = 0
-                        lastBet['betPrice'] = 0
-                        print(f"타임아웃 다운배팅 손해: {money}")
-                        moneyHistory.append(money)
-                    elif candle['close_price'] < lastBet['betPrice']:
-                        # 다운배팅 수익 실현
-                        money = (1-apiTroubleLoss)*(1-slipageLoss)*(1-fee)*money * \
-                            (1-((candle['close_price'] /
-                             lastBet['betPrice'] - 1)*ratio))
-                        lastBet['betTime'] = 0
-                        lastBet['betPrice'] = 0
-                        print(f"타임아웃 다운배팅 수익실현: {money}")
-                        moneyHistory.append(money)
-            fluidProb = 0
-            upProb = 0
-            downProb = 0
-            x = np.matmul(
-                candleMatrix, paramWeight)
-
-            fluidProb = np.matmul(
-                timeWeight / np.linalg.norm(timeWeight), x / np.linalg.norm(x))
-            fluidProb = abs(fluidProb[0][0])
-            # print(fluidProb)
-            fluidThr = 0.5
-            bettingThr = 0.8
-
-            if fluidProb > fluidThr and lastBet['betTime'] == 0:
-                xup = np.matmul(
-                    candleMatrix, raisingParamWeight)
-                upProb = np.matmul(
-                    raisingTimeWeight / np.linalg.norm(raisingTimeWeight), xup / np.linalg.norm(xup))
-                upProb = abs(upProb[0][0])
-
-                xdown = np.matmul(
-                    candleMatrix, loweringParamWeight)
-                downProb = np.matmul(
-                    loweringTimeWeight / np.linalg.norm(loweringTimeWeight), xdown / np.linalg.norm(xdown))
-                downProb = abs(downProb[0][0])
-
-                #print(f"상승 확률: {upProb}")
-                #print(f"하락 확률: {downProb}")
-
-                if upProb > downProb and upProb > bettingThr:
-                    print(f"상승배팅 시도: {upProb}")
-                    lastBet['betDir'] = 'up'
-                    lastBet['betTime'] = candle['close_time']
-                    lastBet['betPrice'] = candle['close_price']
-                    money = money * (1-fee)
-                elif downProb > upProb and downProb > bettingThr:
-                    print(f"하락배팅 시도: {downProb}")
-                    lastBet['betDir'] = 'down'
-                    lastBet['betTime'] = candle['close_time']
-                    lastBet['betPrice'] = candle['close_price']
-                    money = money * (1-fee)
-
-        xline = np.arange(len(moneyHistory))
-        print(f"종료. 금액: {money}")
-        plt.plot(xline, moneyHistory)
-        plt.show()
-
-        return
-
-
-# 지금의 차트 데이터를 받으면, 과거 데이터를 쭈욱 훑으면서 얼마나 일치하는지 판별.
-# 과거 데이터는 폭이 넓어질수도 있고 좁아질수도 있고.
-# 그럼 유사도를 어떻게 판별하지?
-
-    def checkFractal(self):
-        # 과거 차트를 훑어가면서, 간격을 0.5배로 줄이고~ 2배로 늘리고 하면서.
-        # 늘릴때는 그냥 2개로 복사하면 되고
-        # 줄일때는 두 캔들중 높은걸 높은걸로, 낮은것중에 낮은걸로, 거래량은 그냥 합치고. 오픈과 클로즈도 각각 합치면 될테고.
-        return
-
-    def trainFluid(self, versionName, startday, endday, thr, profitR, lossR, ratio):
-        # profitCut 은 1.003 으로 하고, 10배율을 기본값으로 생각하자.
-        fee = 0.0004*ratio
-        [pw1mF, pw5mF, pw15mF, pw1hF, tw1mF, tw5mF, tw15mF, tw1hF, pw1mR, pw5mR, pw15mR, pw1hR, tw1mR, tw5mR, tw15mR, tw1hR, pw1mL, pw5mL, pw15mL, pw1hL, tw1mL, tw5mL, tw15mL, tw1hL, totF, totR, totL] = self.loadAllWeights(
-            versionName)
-        correct = 0
-        incorrect = 0
-        timeout = 0
-        len1m = len(tw1mF[0])  # 30
-        len5m = len(tw5mF[0])  # 10
-        len15m = len(tw15mF[0])  # 10
-        len1h = len(tw1hF[0])  # 5
-
-        mat1m = np.zeros((len1m, self.paramNum))  # 30 x 7
-        mat5m = np.zeros((len5m, self.paramNum))  # 10 x 7
-        mat15m = np.zeros((len15m, self.paramNum))  # 10 x 7
-        mat1h = np.zeros((len1h, self.paramNum))  # 5 x 7
-
-        lastBet = {"betSize": 0, "betTime": 0,
-                   "betDir": "", "betPrice": 0, 'candleType': ""}
-        df1m = pd.read_csv(
-            self.dir+f'/data/future_BTC_1m_{startday}_{endday}.csv')
-        df5m = pd.read_csv(
-            self.dir+f'/data/future_BTC_5m_{startday}_{endday}.csv')
-        df15m = pd.read_csv(
-            self.dir+f'/data/future_BTC_15m_{startday}_{endday}.csv')
-        df1h = pd.read_csv(
-            self.dir+f'/data/future_BTC_1h_{startday}_{endday}.csv')
-
-        mat1m = self.initMat(mat1m, df1m, len1m)
-        mat5m = self.initMat(mat5m, df5m, len5m)
-        mat15m = self.initMat(mat15m, df15m, len15m)
-        mat1h = self.initMat(mat1h, df1h, len1h)
-        lastProb = 0
-        prob = 0
-        i = len1m
-        lastIdx = -1
-        with tqdm(total=len(df1m)-len1m) as pbar:
-            for i in tqdm(range(len1m, len(df1m)), desc='train fluid...'):
-                # while i < len(df1m):
-                pbar.update(1)
-                # print(i)
-                # 1m 기준으로 계속 보고, 5개 될때마다 5m, 15개 될때마다 15m, 60개 될때마다 1h 업데이트 해주자.
-                candle1m = df1m.iloc[i]
-                candle5m = df5m.iloc[floor(i/5)]
-                candle15m = df15m.iloc[floor(i/15)]
-                candle1h = df1h.iloc[floor(i/60)]
-
-                # 5번 - 1번. 10번 - 2번.
-                # 15번 - 1번. 30번 - 2번.
-                # 60번 - 1번.
-                # 1분봉 데이터 업데이트
-                for jj in range(len1m-1):
-                    mat1m[jj] = mat1m[jj+1]
-                mat1m[len1m-1][0] = candle1m['high_price']
-                mat1m[len1m-1][1] = candle1m['low_price']
-                mat1m[len1m-1][2] = candle1m['open_price']
-                mat1m[len1m-1][3] = candle1m['close_price']
-                mat1m[len1m-1][4] = candle1m['volume']
-                mat1m[len1m -
-                      1][5] = candle1m['number_of_trades']
-                mat1m[len1m -
-                      1][6] = candle1m['close_time']
-
-                if candle1m['close_time'] == candle5m['close_time']:
-                    # 5분봉 업데이트
-                    for jj in range(len5m-1):
-                        mat5m[jj] = mat5m[jj+1]
-                    mat5m[len5m-1][0] = candle5m['high_price']
-                    mat5m[len5m-1][1] = candle5m['low_price']
-                    mat5m[len5m-1][2] = candle5m['open_price']
-                    mat5m[len5m-1][3] = candle5m['close_price']
-                    mat5m[len5m-1][4] = candle5m['volume']
-                    mat5m[len5m -
-                          1][5] = candle5m['number_of_trades']
-                    mat5m[len5m -
-                          1][6] = candle5m['close_time']
-                if candle1m['close_time'] == candle15m['close_time']:
-                    # 15분봉 업데이트
-                    for jj in range(len15m-1):
-                        mat15m[jj] = mat15m[jj+1]
-                    mat15m[len15m-1][0] = candle15m['high_price']
-                    mat15m[len15m-1][1] = candle15m['low_price']
-                    mat15m[len15m-1][2] = candle15m['open_price']
-                    mat15m[len15m-1][3] = candle15m['close_price']
-                    mat15m[len15m-1][4] = candle15m['volume']
-                    mat15m[len15m -
-                           1][5] = candle15m['number_of_trades']
-                    mat15m[len15m -
-                           1][6] = candle15m['close_time']
-                if candle1m['close_time'] == candle1h['close_time']:
-                    # 1시간 봉 업데이트
-                    for jj in range(len1h-1):
-                        mat1h[jj] = mat1h[jj+1]
-                    mat1h[len1h-1][0] = candle1h['high_price']
-                    mat1h[len1h-1][1] = candle1h['low_price']
-                    mat1h[len1h-1][2] = candle1h['open_price']
-                    mat1h[len1h-1][3] = candle1h['close_price']
-                    mat1h[len1h-1][4] = candle1h['volume']
-                    mat1h[len1h -
-                          1][5] = candle1h['number_of_trades']
-                    mat1h[len1h -
-                          1][6] = candle1h['close_time']
-
-                if lastBet["betTime"] != 0:
-                    # 지난 배팅 체크하고 배팅하기
-                    if lastBet["betTime"]+self.positionLifetime > candle1m['close_time']:
-                        if lastBet['betPrice']*profitR < candle1m['high_price'] or lastBet['betPrice']*(2-profitR) > candle1m['low_price']:
-                            # 변동성이 있었으니 정답 맞는지 확인
-                            if prob > thr:
-                                # 정답 맞았으니 지금것 세이브.
-                                self.saveWeight(pw1mF, "{versionName}_pw1mF".format(
-                                    versionName=versionName))
-                                self.saveWeight(pw5mF, "{versionName}_pw5mF".format(
-                                    versionName=versionName))
-                                self.saveWeight(pw15mF, "{versionName}_pw15mF".format(
-                                    versionName=versionName))
-                                self.saveWeight(pw1hF, "{versionName}_pw1hF".format(
-                                    versionName=versionName))
-                                self.saveWeight(tw1mF, "{versionName}_tw1mF".format(
-                                    versionName=versionName))
-                                self.saveWeight(tw5mF, "{versionName}_tw5mF".format(
-                                    versionName=versionName))
-                                self.saveWeight(tw15mF, "{versionName}_tw15mF".format(
-                                    versionName=versionName))
-                                self.saveWeight(tw1hF, "{versionName}_tw1hF".format(
-                                    versionName=versionName))
-                                self.saveWeight(totF, f"{versionName}_totF")
-                                print("correct!")
-                                correct += 1
-                            else:
-                                incorrect += 1
-                                print("incorrect!")
-                                #i = lastIdx
-                            lastBet['betTime'] = 0
-                            lastBet['betPrice'] = 0
-                    else:
-                        lastBet['betTime'] = 0
-                        lastBet['betPrice'] = 0
-                        timeout += 1
-
-                if lastBet['betTime'] == 0:
-                    # 배팅하기
-                    [pw1mF, pw5mF, pw15mF, pw1hF, tw1mF, tw5mF, tw15mF, tw1hF, pw1mR, pw5mR, pw15mR, pw1hR, tw1mR, tw5mR, tw15mR, tw1hR, pw1mL, pw5mL, pw15mL, pw1hL, tw1mL, tw5mL, tw15mL, tw1hL, totF, totR, totL] = self.loadAllWeights(
-                        versionName)
-                    totF = self.loadWeight(f"{versionName}_totF")
-                    for i in range(len(pw1mF)):
-                        pw1mF[i][0] = pw1mF[i][0] + pw1mF[i][0] * \
-                            0.05*(2*random.random()-1)
-                        pw5mF[i][0] = pw5mF[i][0] + pw5mF[i][0] * \
-                            0.05*(2*random.random()-1)
-                        pw15mF[i][0] = pw15mF[i][0] + \
-                            pw15mF[i][0]*0.05*(2*random.random()-1)
-                        pw1hF[i][0] = pw1hF[i][0] + pw1hF[i][0] * \
-                            0.05*(2*random.random()-1)
-                    for i in range(len1m):
-                        tw1mF[0][i] = tw1mF[0][i] + tw1mF[0][i] * \
-                            0.05*(2*random.random()-1)
-                    plst = []
-                    lastProb = prob
-                    lastIdx = i
-                    x1m = np.matmul(mat1m, pw1mF)
-                    p1m = np.matmul(tw1mF, x1m)
-                    plst.append(p1m[0][0])
-                    x5m = np.matmul(mat5m, pw5mF)
-                    p5m = np.matmul(tw5mF, x5m)
-                    plst.append(p5m[0][0])
-                    x15m = np.matmul(mat15m, pw15mF)
-                    p15m = np.matmul(tw15mF, x15m)
-                    plst.append(p15m[0][0])
-                    x1h = np.matmul(mat1h, pw1hF)
-                    p1h = np.matmul(tw1hF, x1h)
-                    plst.append(p1h[0][0])
-                    for i in range(len(totF[0])):
-                        totF[0][i] = totF[0][i]+totF[0][i] * \
-                            0.01*(2*random.random()-1)
-                    for i in range(len(totF[0])):
-                        prob += totF[0][i]*plst[i]
-                    prob = np.tanh(prob)
-                    prob = max(0.1*prob, prob)
-                    print(f"prob: {prob}")
-                    print(
-                        f"bet Price: {candle1m['close_price']}, betTime: {candle1m['close_time']}")
-                    lastBet['betTime'] = candle1m['close_time']
-                    lastBet['betPrice'] = candle1m['close_price']
-                i += 1
-        print(
-            f"correct: {correct}, incorrect: {incorrect}, timout: {timeout}")
-
-    def trainRaise(self, versionName, startday, endday, thr, profitR, lossR, ratio):
-        # profitCut 은 1.003 으로 하고, 10배율을 기본값으로 생각하자.
-        fee = 0.0004*ratio
-        [pw1mF, pw5mF, pw15mF, pw1hF, tw1mF, tw5mF, tw15mF, tw1hF, pw1mR, pw5mR, pw15mR, pw1hR, tw1mR, tw5mR, tw15mR, tw1hR, pw1mL, pw5mL, pw15mL, pw1hL, tw1mL, tw5mL, tw15mL, tw1hL, totF, totR, totL] = self.loadAllWeights(
-            versionName)
-        correct = 0
-        incorrect = 0
-        timeout = 0
-        fail = 0
-        len1m = len(tw1mR[0])  # 30
-        len5m = len(tw5mR[0])  # 10
-        len15m = len(tw15mR[0])  # 10
-        len1h = len(tw1hR[0])  # 5
-
-        mat1m = np.zeros((len1m, self.paramNum))  # 30 x 7
-        mat5m = np.zeros((len5m, self.paramNum))  # 10 x 7
-        mat15m = np.zeros((len15m, self.paramNum))  # 10 x 7
-        mat1h = np.zeros((len1h, self.paramNum))  # 5 x 7
-
-        lastBet = {"betSize": 0, "betTime": 0,
-                   "betDir": "", "betPrice": 0, 'candleType': ""}
-        df1m = pd.read_csv(
-            self.dir+f'/data/future_BTC_1m_{startday}_{endday}.csv')
-        df5m = pd.read_csv(
-            self.dir+f'/data/future_BTC_5m_{startday}_{endday}.csv')
-        df15m = pd.read_csv(
-            self.dir+f'/data/future_BTC_15m_{startday}_{endday}.csv')
-        df1h = pd.read_csv(
-            self.dir+f'/data/future_BTC_1h_{startday}_{endday}.csv')
-
-        mat1m = self.initMat(mat1m, df1m, len1m)
-        mat5m = self.initMat(mat5m, df5m, len5m)
-        mat15m = self.initMat(mat15m, df15m, len15m)
-        mat1h = self.initMat(mat1h, df1h, len1h)
-        prob = 0
-        for i in tqdm(range(len1m, len(df1m)), desc='train fluid...'):
+        positionLifetime = 1000*60*15  # ms
+        for ii in tqdm(range(len1m, len(df1m)), desc='training...'):
             # 1m 기준으로 계속 보고, 5개 될때마다 5m, 15개 될때마다 15m, 60개 될때마다 1h 업데이트 해주자.
-            candle1m = df1m.iloc[i]
-            candle5m = df5m.iloc[floor(i/5)]
-            candle15m = df15m.iloc[floor(i/15)]
-            candle1h = df1h.iloc[floor(i/60)]
-
-            # 5번 - 1번. 10번 - 2번.
-            # 15번 - 1번. 30번 - 2번.
-            # 60번 - 1번.
-            # 1분봉 데이터 업데이트
-            # 노이즈까지 포함해서 과적합 되는 것을 막기 위해 값에 살짝 변형을 준다.
+            candle1m = df1m.iloc[ii]
+            candle5m = df5m.iloc[floor(ii/5)]
+            candle15m = df15m.iloc[floor(ii/15)]
+            candle1h = df1h.iloc[floor(ii/60)]
             for jj in range(len1m-1):
                 mat1m[jj] = mat1m[jj+1]
             mat1m[len1m-1][0] = candle1m['high_price'] + 0.0005 * \
@@ -783,98 +365,196 @@ class MultiCandleAnalyzer():
                       1][5] = candle1h['number_of_trades'] + 0.0005*(2*random.random()-1)*candle1h['number_of_trades']
                 mat1h[len1h -
                       1][6] = candle1h['close_time']
+            # 수익 체크.
+            if lastBet['betTime'] != 0 and lastBet['betTime']+positionLifetime > candle1m['close_time']:
+                if lastBet['betDir'] == "up":
+                    if candle1m['high_price'] > lastBet['betPrice']*profitR:
+                        # 상승배팅 수익 실현
+                        money = (1-apiTroubleLoss)*(1-slipageLoss) * \
+                            (1-fee)*money*(1+(profitR-1)*ratio)
+                        lastBet['betTime'] = 0
+                        lastBet['betPrice'] = 0
+                        self.saveJson({"weights1mP": weights1mP,
+                                       "weights1mT": weights1mT,
+                                       "weights5mP": weights5mP,
+                                       "weights5mT": weights5mT,
+                                       "weights15mP": weights15mP,
+                                       "weights15mT": weights15mT,
+                                       "weights1hP": weights1hP,
+                                       "weights1hT": weights1hT,
+                                       "weightsTot": weightsTot
+                                       }, f"weights/{versionName}.json")
+                        #print(f"상승배팅 수익실현: {money}")
+                        moneyHistory.append(money)
+                    elif candle1m['low_price'] < lastBet['betPrice']*lossR:
+                        # 상승배팅 손해
+                        money = (1-apiTroubleLoss)*(1-slipageLoss) * \
+                            (1-fee)*money*(1+(lossR-1)*ratio)
+                        lastBet['betTime'] = 0
+                        lastBet['betPrice'] = 0
+                        #print(f"상승배팅 손해: {money}")
+                        moneyHistory.append(money)
+                elif lastBet['betDir'] == "down":
+                    if candle1m['high_price'] > lastBet['betPrice']*profitR:
+                        # 하락배팅 손해
+                        money = (1-apiTroubleLoss)*(1-slipageLoss) * \
+                            (1-fee)*money * (1-(profitR-1)*ratio)
 
-            if lastBet["betTime"] != 0:
-                # 지난 배팅 체크하고 배팅하기
-                if lastBet["betTime"]+self.positionLifetime > candle1m['close_time']:
-                    if lastBet['betPrice']*profitR < candle1m['high_price'] and lastBet['betPrice']*lossR < candle1m['low_price']:
-                        # 변동성이 있었으니 정답 맞는지 확인
-                        if prob > thr:
-                            # 정답 맞았으니 지금것 세이브.
-                            self.saveWeight(pw1mR, "{versionName}_pw1mR".format(
-                                versionName=versionName))
-                            self.saveWeight(pw5mR, "{versionName}_pw5mR".format(
-                                versionName=versionName))
-                            self.saveWeight(pw15mR, "{versionName}_pw15mR".format(
-                                versionName=versionName))
-                            self.saveWeight(pw1hR, "{versionName}_pw1hR".format(
-                                versionName=versionName))
-                            self.saveWeight(tw1mR, "{versionName}_tw1mR".format(
-                                versionName=versionName))
-                            self.saveWeight(tw5mR, "{versionName}_tw5mR".format(
-                                versionName=versionName))
-                            self.saveWeight(tw15mR, "{versionName}_tw15mR".format(
-                                versionName=versionName))
-                            self.saveWeight(tw1hR, "{versionName}_tw1hR".format(
-                                versionName=versionName))
-                            self.saveWeight(totR, f"{versionName}_totR")
-                            # print("correct!")
-                            correct += 1
-                        else:
-                            incorrect += 1
                         lastBet['betTime'] = 0
                         lastBet['betPrice'] = 0
-                    elif lastBet['betPrice']*lossR > candle1m['low_price'] and lastBet['betPrice']*profitR > candle1m['high_price']:
+                        #print(f"하락배팅 손해: {money}")
+                        moneyHistory.append(money)
+                    elif candle1m['low_price'] < lastBet['betPrice']*lossR:
+                        # 하락배팅 수익실현
+                        money = (1-apiTroubleLoss)*(1-slipageLoss) * \
+                            (1-fee)*money*(1-(lossR-1)*ratio)
+
                         lastBet['betTime'] = 0
                         lastBet['betPrice'] = 0
-                        # print("fail")
-                        fail += 1
-                else:
-                    lastBet['betTime'] = 0
-                    lastBet['betPrice'] = 0
-                    timeout += 1
-            if lastBet['betTime'] == 0:
-                # 배팅하기
-                [pw1mF, pw5mF, pw15mF, pw1hF, tw1mF, tw5mF, tw15mF, tw1hF, pw1mR, pw5mR, pw15mR, pw1hR, tw1mR, tw5mR, tw15mR, tw1hR, pw1mL, pw5mL, pw15mL, pw1hL, tw1mL, tw5mL, tw15mL, tw1hL, totF, totR, totL] = self.loadAllWeights(
-                    versionName)
-                #totR = self.loadWeight(f"{versionName}_totR")
-                for i in range(len(pw1mR)):
-                    pw1mR[i][0] = pw1mR[i][0] + pw1mR[i][0] * \
+                        self.saveJson({"weights1mP": weights1mP,
+                                       "weights1mT": weights1mT,
+                                       "weights5mP": weights5mP,
+                                       "weights5mT": weights5mT,
+                                       "weights15mP": weights15mP,
+                                       "weights15mT": weights15mT,
+                                       "weights1hP": weights1hP,
+                                       "weights1hT": weights1hT,
+                                       "weightsTot": weightsTot
+                                       }, f"weights/{versionName}.json")
+                        #print(f"하락배팅 수익실현: {money}")
+                        moneyHistory.append(money)
+            elif lastBet['betTime'] != 0 and lastBet['betTime']+positionLifetime < candle1m['close_time']:
+                # 시간초과로 인한 포지션 종료.
+                if lastBet['betDir'] == "up":
+                    if candle1m['close_price'] > lastBet['betPrice']:
+                        # 상승배팅 수익 실현
+                        money = (1-apiTroubleLoss)*(1-slipageLoss)*(1-fee)*money * \
+                            (1+((candle1m['close_price'] /
+                             lastBet['betPrice'])-1) * ratio)
+                        lastBet['betTime'] = 0
+                        lastBet['betPrice'] = 0
+                        self.saveJson({"weights1mP": weights1mP,
+                                       "weights1mT": weights1mT,
+                                       "weights5mP": weights5mP,
+                                       "weights5mT": weights5mT,
+                                       "weights15mP": weights15mP,
+                                       "weights15mT": weights15mT,
+                                       "weights1hP": weights1hP,
+                                       "weights1hT": weights1hT,
+                                       "weightsTot": weightsTot
+                                       }, f"weights/{versionName}.json")
+                        #print(f"타임아웃 상승배팅 수익실현: {money}")
+                        moneyHistory.append(money)
+                    elif candle1m['close_price'] < lastBet['betPrice']:
+                        # 상승배팅 손해
+                        money = (1-apiTroubleLoss)*(1-slipageLoss)*(1-fee)*money * \
+                            (1-(1-(candle1m['close_price'] /
+                             lastBet['betPrice'])) * ratio)
+                        lastBet['betTime'] = 0
+                        lastBet['betPrice'] = 0
+                        #print(f"타임아웃 상승배팅 손해: {money}")
+                        moneyHistory.append(money)
+                elif lastBet['betDir'] == "down":
+                    if candle1m['close_price'] > lastBet['betPrice']:
+                        # 다운배팅 손해
+                        money = (1-apiTroubleLoss)*(1-slipageLoss)*(1-fee)*money * \
+                            (1-(candle1m['close_price'] /
+                             lastBet['betPrice'] - 1)*ratio)
+                        lastBet['betTime'] = 0
+                        lastBet['betPrice'] = 0
+                        #print(f"타임아웃 다운배팅 손해: {money}")
+                        moneyHistory.append(money)
+                    elif candle1m['close_price'] < lastBet['betPrice']:
+                        # 다운배팅 수익 실현
+                        money = (1-apiTroubleLoss)*(1-slipageLoss)*(1-fee)*money * \
+                            (1-((candle1m['close_price'] /
+                             lastBet['betPrice'] - 1)*ratio))
+                        lastBet['betTime'] = 0
+                        lastBet['betPrice'] = 0
+                        self.saveJson({"weights1mP": weights1mP,
+                                       "weights1mT": weights1mT,
+                                       "weights5mP": weights5mP,
+                                       "weights5mT": weights5mT,
+                                       "weights15mP": weights15mP,
+                                       "weights15mT": weights15mT,
+                                       "weights1hP": weights1hP,
+                                       "weights1hT": weights1hT,
+                                       "weightsTot": weightsTot
+                                       }, f"weights/{versionName}.json")
+                        #print(f"타임아웃 다운배팅 수익실현: {money}")
+                        moneyHistory.append(money)
+                #print("걍 이도저도 아닌 타임아웃")
+                lastBet['betTime'] = 0
+                lastBet['betPrice'] = 0
+                lastBet['betDir'] = ""
+            if lastBet['betTime'] == 0 and lastBet['betPrice'] == 0:
+                for i in range(len(weights1mP)):
+                    weights1mP[i] = weights1mP[i] + \
+                        weights1mP[i] * 0.05*(2*random.random()-1)
+                    weights5mP[i] = weights5mP[i] + \
+                        weights5mP[i] * 0.05*(2*random.random()-1)
+                    weights15mP[i] = weights15mP[i] + \
+                        weights15mP[i] * 0.05*(2*random.random()-1)
+                    weights1hP[i] = weights1hP[i] + \
+                        weights1hP[i] * 0.05*(2*random.random()-1)
+                for kk in range(len1m):
+                    weights1mT[kk] = weights1mT[kk] + weights1mT[kk] * \
                         0.05*(2*random.random()-1)
-                    pw5mR[i][0] = pw5mR[i][0] + pw5mR[i][0] * \
+                for kk in range(len5m):
+                    weights5mT[kk] = weights5mT[kk] + weights5mT[kk] * \
                         0.05*(2*random.random()-1)
-                    pw15mR[i][0] = pw15mR[i][0] + \
-                        pw15mR[i][0]*0.05*(2*random.random()-1)
-                    pw1hR[i][0] = pw1hR[i][0] + pw1hR[i][0] * \
+                for kk in range(len15m):
+                    weights15mT[kk] = weights15mT[kk] + weights15mT[kk] * \
                         0.05*(2*random.random()-1)
-                for i in range(len1m):
-                    tw1mR[0][i] = tw1mR[0][i] + tw1mR[0][i] * \
-                        0.05*(2*random.random()-1)
-                for i in range(len5m):
-                    tw5mR[0][i] = tw5mR[0][i] + tw5mR[0][i] * \
-                        0.05*(2*random.random()-1)
-                for i in range(len15m):
-                    tw15mR[0][i] = tw15mR[0][i] + tw15mR[0][i] * \
-                        0.05*(2*random.random()-1)
-                for i in range(len1h):
-                    tw1hR[0][i] = tw1hR[0][i] + tw1hR[0][i] * \
+                for kk in range(len1h):
+                    weights1hT[kk] = weights1hT[kk] + weights1hT[kk] * \
                         0.05*(2*random.random()-1)
                 plst = []
-                x1m = np.matmul(mat1m, pw1mR)
-                p1m = np.matmul(tw1mR, x1m)
+                x1m = np.matmul(mat1m, np.transpose(
+                    np.array([weights1mP])))
+                p1m = np.matmul((np.array([weights1mT])), x1m)
                 plst.append(p1m[0][0])
-                x5m = np.matmul(mat5m, pw5mR)
-                p5m = np.matmul(tw5mR, x5m)
+                x5m = np.matmul(mat5m, np.transpose(
+                    np.array([weights5mP])))
+                p5m = np.matmul(np.array([weights5mT]), x5m)
                 plst.append(p5m[0][0])
-                x15m = np.matmul(mat15m, pw15mR)
-                p15m = np.matmul(tw15mR, x15m)
+                x15m = np.matmul(mat15m, np.transpose(
+                    np.array([weights15mP])))
+                p15m = np.matmul(np.array([weights15mT]), x15m)
                 plst.append(p15m[0][0])
-                x1h = np.matmul(mat1h, pw1hR)
-                p1h = np.matmul(tw1hR, x1h)
+                x1h = np.matmul(mat1h, np.transpose(
+                    np.array([weights1hP])))
+                p1h = np.matmul(np.array([weights1hT]), x1h)
                 plst.append(p1h[0][0])
-                for i in range(len(totR[0])):
-                    totR[0][i] = totR[0][i]+totR[0][i] * \
+                for kk in range(len(weightsTot)):
+                    weightsTot[kk] = weightsTot[kk]+weightsTot[kk] * \
                         0.05*(2*random.random()-1)
-                for i in range(len(totR[0])):
-                    prob += totR[0][i]*plst[i]
+                for kk in range(len(weightsTot)):
+                    prob += weightsTot[kk]*plst[kk]
                 prob = np.tanh(prob)
                 prob = max(0.1*prob, prob)
-                #print(f"prob: {prob}")
-                #print(f"bet Price: {candle1m['close_price']}")
-                lastBet['betTime'] = candle1m['close_time']
-                lastBet['betPrice'] = candle1m['close_price']
-        print(
-            f"versionName: {versionName}, correct: {correct}, incorrect: {incorrect}, fail: {fail}, timeout: {timeout}")
+                if prob > upThr:
+                    lastBet['betTime'] = candle1m['close_time']
+                    lastBet['betPrice'] = candle1m['close_price']
+                    lastBet['betDir'] = "up"
+                    money = money * (1-fee)
+                    #print(f"상승배팅 시작: {money}")
+                elif prob < downThr:
+                    lastBet['betTime'] = candle1m['close_time']
+                    lastBet['betPrice'] = candle1m['close_price']
+                    lastBet['betDir'] = "down"
+                    money = money * (1-fee)
+                    #print(f"하락배팅 시작: {money}")
+                else:
+                    pass
+                    #print(f"배팅없음: {money}")
+
+        xline = np.arange(len(moneyHistory))
+        #print(f"종료. 금액: {money}")
+        plt.plot(xline, moneyHistory)
+        plt.show()
+
+        return
 
     def testModel(self, versionName, startday, endday, thr, profitR, lossR, ratio):
         fee = 0.0004*ratio
@@ -1003,47 +683,39 @@ class MultiCandleAnalyzer():
                     if candle1m['high_price'] > lastBet['betPrice']*profitR:
                         # 상승배팅 수익 실현
                         money = (1-apiTroubleLoss)*(1-slipageLoss) * \
-                            (1-fee)*money*profitR
+                            (1-fee)*money*(1+(profitR-1)*ratio)
                         # money = (1-fee)*money * \
                         #    (1+((candle['high_price'] /
                         #     lastBet['betPrice'])-1) * ratio)
                         lastBet['betTime'] = 0
                         lastBet['betPrice'] = 0
-                        print(f"상승배팅 수익실현: {money}")
+                        #print(f"상승배팅 수익실현: {money}")
                         moneyHistory.append(money)
                     elif candle1m['low_price'] < lastBet['betPrice']*lossR:
                         # 상승배팅 손해
                         money = (1-apiTroubleLoss)*(1-slipageLoss) * \
-                            (1-fee)*money*lossR
-                        # money = (1-fee)*money * \
-                        #    (1-(1-(candle['low_price'] /
-                        #     lastBet['betPrice'])) * ratio)
+                            (1-fee)*money*(1+(lossR-1)*ratio)
                         lastBet['betTime'] = 0
                         lastBet['betPrice'] = 0
-                        print(f"상승배팅 손해: {money}")
+                        #print(f"상승배팅 손해: {money}")
                         moneyHistory.append(money)
                 elif lastBet['betDir'] == "down":
                     if candle1m['high_price'] > lastBet['betPrice']*profitR:
                         # 하락배팅 손해
                         money = (1-apiTroubleLoss)*(1-slipageLoss) * \
-                            (1-fee)*money * (2-profitR)
-                        # money = (1-fee)*money * \
-                        #    (1-(candle['high_price'] /
-                        #     lastBet['betPrice'] - 1)*ratio)
+                            (1-fee)*money*(2-(profitR-1)*ratio)
                         lastBet['betTime'] = 0
                         lastBet['betPrice'] = 0
-                        print(f"하락배팅 손해: {money}")
+                        #print(f"하락배팅 손해: {money}")
                         moneyHistory.append(money)
                     elif candle1m['low_price'] < lastBet['betPrice']*lossR:
                         # 하락배팅 수익실현
                         money = (1-apiTroubleLoss)*(1-slipageLoss) * \
-                            (1-fee)*money*profitR
-                        # money = (1-fee)*money * \
-                        #    (1-((candle['low_price'] /
-                        #     lastBet['betPrice'] - 1)*ratio))
+                            (1-fee)*money*(1-(lossR-1)*ratio)
+
                         lastBet['betTime'] = 0
                         lastBet['betPrice'] = 0
-                        print(f"하락배팅 수익실현: {money}")
+                        #print(f"하락배팅 수익실현: {money}")
                         moneyHistory.append(money)
             elif lastBet['betTime'] != 0 and lastBet['betTime']+positionLifetime < candle1m['close_time']:
                 # 시간초과로 인한 포지션 종료.
@@ -1053,10 +725,10 @@ class MultiCandleAnalyzer():
                         # 상승배팅 수익 실현
                         money = (1-apiTroubleLoss)*(1-slipageLoss)*(1-fee)*money * \
                             (1+((candle1m['close_price'] /
-                             lastBet['betPrice'])-1) * ratio)
+                                 lastBet['betPrice'])-1) * ratio)
                         lastBet['betTime'] = 0
                         lastBet['betPrice'] = 0
-                        print(f"타임아웃 상승배팅 수익실현: {money}")
+                        #print(f"타임아웃 상승배팅 수익실현: {money}")
                         moneyHistory.append(money)
                     elif candle1m['close_price'] < lastBet['betPrice']:
                         # 상승배팅 손해
@@ -1065,7 +737,7 @@ class MultiCandleAnalyzer():
                              lastBet['betPrice'])) * ratio)
                         lastBet['betTime'] = 0
                         lastBet['betPrice'] = 0
-                        print(f"타임아웃 상승배팅 손해: {money}")
+                        #print(f"타임아웃 상승배팅 손해: {money}")
                         moneyHistory.append(money)
                 elif lastBet['betDir'] == "down":
                     if candle1m['close_price'] > lastBet['betPrice']:
@@ -1075,7 +747,7 @@ class MultiCandleAnalyzer():
                              lastBet['betPrice'] - 1)*ratio)
                         lastBet['betTime'] = 0
                         lastBet['betPrice'] = 0
-                        print(f"타임아웃 다운배팅 손해: {money}")
+                        #print(f"타임아웃 다운배팅 손해: {money}")
                         moneyHistory.append(money)
                     elif candle1m['close_price'] < lastBet['betPrice']:
                         # 다운배팅 수익 실현
@@ -1084,7 +756,7 @@ class MultiCandleAnalyzer():
                              lastBet['betPrice'] - 1)*ratio))
                         lastBet['betTime'] = 0
                         lastBet['betPrice'] = 0
-                        print(f"타임아웃 다운배팅 수익실현: {money}")
+                        #print(f"타임아웃 다운배팅 수익실현: {money}")
                         moneyHistory.append(money)
             for i in range(len(weights1mP)):
                 weights1mP[i] = weights1mP[i] + \
@@ -1132,7 +804,6 @@ class MultiCandleAnalyzer():
                     lastBet['betPrice'] = candle1m['close_price']
                     money = money * (1-fee)
         xline = np.arange(len(moneyHistory))
-        print(f"종료. 금액: {money}")
         plt.plot(xline, moneyHistory)
         plt.show()
 
@@ -1142,8 +813,28 @@ class MultiCandleAnalyzer():
 # %%
 if __name__ == '__main__':
     mca = MultiCandleAnalyzer()
-    mca.testModel("220320_1", "2021-01-01",
-                  "2021-12-31", 0.5, 1.003, 0.997, 10)
+    procs = []
+    # mca.trainModel(versionName="220320_1", startday="2021-01-01",
+    #               endday="2021-12-31", upThr=0.8, downThr=0.2, profitR=1.003, lossR=0.997, ratio=10)
+    versionName = ["220320_1", "220327_1", "220327_2", "220327_3"]
+    startday = ["2021-01-01", "2021-01-01", "2021-01-01", "2021-01-01"]
+    endday = ["2021-12-31", "2021-12-31", "2021-12-31", "2021-12-31"]
+    upThr = [0.8, 0.8, 0.8, 0.8]
+    downThr = [0.2, 0.2, 0.2, 0.2]
+    profitR = [1.003, 1.003, 1.003, 1.003]
+    lossR = [0.997, 0.997, 0.997, 0.997]
+    ratio = [10, 10, 10, 10]
+    for i in range(3):
+        for i, v, s, e, ut, dt, p, l, r in zip(range(len(versionName)), versionName, startday, endday, upThr, downThr, profitR, lossR, ratio):
+            p = multiprocessing.Process(target=mca.trainModel, args=(
+                v, s, e, ut, dt, p, l, r))
+            procs.append(p)
+            p.start()
+        for proc in procs:
+            proc.join()
+    pool = multiprocessing.Pool(processes=4)
+    pool.map(mca.trainModel, versionName, startday,
+             endday, upThr, downThr, profitR, lossR, ratio)
 
 
 #    procs = []
